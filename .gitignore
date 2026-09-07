@@ -1,0 +1,6 @@
+/target
+/dashboard/node_modules
+/dashboard/dist
+/dist
+*.app
+/.superpowers
