@@ -104,8 +104,39 @@ centiseconds, so a ~0.02–0.03 percentage-point wobble at this magnitude is
 expected sampling noise rather than a real regression, and it is an order of
 magnitude below the 0.3% ceiling either way.
 
-Not re-measured: CPU/memory with the **menu open** (that requires driving
-real AppKit UI — clicking the status item — which this environment cannot
-do; see the Task 17 report for what could and could not be verified) and the
-parked-across-display-sleep number (unchanged code path; Task 17 touches
-nothing on it).
+Not re-measured by that pass: the parked-across-display-sleep number
+(unchanged code path; Task 17 touches nothing on it).
+
+### Menu open, measured
+
+The menu-open case was left open above as needing "real AppKit UI ... which
+this environment cannot do". It can be driven, and it matters more than the
+closed case: an open dropdown is the only state that both samples at 1 Hz and
+draws, and the run loop is in `NSEventTrackingRunLoopMode` throughout — the
+mode in which a default-mode timer silently stops firing, which is a bug this
+project has already shipped once.
+
+Harness: two one-shot `NSTimer`s registered in `NSRunLoopCommonModes`, the
+first calling `performClick` on the status item button to open the menu, the
+second calling `cancelTracking` 30s later, with a counter incremented in
+`drawRect:`. Measured on the release build, then removed.
+
+| | measured |
+|---|---|
+| Redraws while the menu was open ~30s | **30** — i.e. 1 Hz, exactly the menu-open cadence |
+| CPU, menu open, 26s | **1.04%** |
+| Redraws in the 60s *after* the menu closed | **0** |
+| CPU, settled, menu closed, 58s | **0.190%** (baseline 0.167%) |
+
+Three things this establishes that reasoning could not. The panel really does
+update while the menu is open, so the common-modes timer registration is
+doing its job in tracking mode. The panel really does stop when the menu
+closes — zero redraws in a full minute, which is the claim the section above
+makes on inspection alone. And the cost returns to the idle baseline
+afterwards rather than staying elevated, so nothing is left running.
+
+An open dropdown costs about 6x idle. That is the intended trade and it is
+bounded by how long a user holds the menu open, but it is the number to watch
+if the panel ever gains animation: at 1 Hz the drawing is nearly free next to
+the sampling, and that stops being true if redraws are decoupled from
+samples.
