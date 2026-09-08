@@ -9,7 +9,11 @@ use vitals_core::schema::Snapshot;
 /// changes, which is what keeps the idle cost near zero.
 pub fn format_title(s: &Snapshot) -> String {
     let gb = s.mem_used_mb as f32 / 1024.0;
-    if gb >= 100.0 {
+    // 99.95, not 100.0: the else branch formats with {:.1}, which rounds up,
+    // so anything from 99.95 GB renders as "100.0G" and blows the width
+    // budget by a character. Branch on what will be *printed*, not on the
+    // value.
+    if gb >= 99.95 {
         // Three significant digits are enough, and the decimal would push
         // the item past its width budget on a 128 GB machine.
         format!("{:.0}% · {:.0}G", s.cpu_pct, gb)
@@ -101,11 +105,22 @@ mod tests {
 
     #[test]
     fn title_never_exceeds_twelve_characters() {
-        // Widest case is a 96 GB machine at full tilt: "100% · 97.7G".
-        for (cpu, mem) in [(0.0, 0), (12.4, 18_211), (100.0, 131_072), (99.9, 99_999)] {
-            let t = format_title(&snap(cpu, mem));
-            assert!(t.chars().count() <= 12, "title too long: {t:?}");
+        // A handful of hand-picked sizes cannot find a rounding boundary, so
+        // sweep instead: every 7 MB from 0 to ~195 GB, at the widest CPU
+        // string there is. The prime step keeps the samples from landing
+        // only on round GB values, which is exactly where the bug wasn't.
+        for mb in (0..=200_000).step_by(7) {
+            let t = format_title(&snap(100.0, mb));
+            assert!(t.chars().count() <= 12, "title too long at {mb} MB: {t:?}");
         }
+    }
+
+    #[test]
+    fn the_decimal_is_dropped_before_the_hundred_gigabyte_mark() {
+        // 99.95 GB and up print as "100.0G" under {:.1}, one character over
+        // budget, so the branch has to fire below 100 GB, not at it.
+        assert_eq!(format_title(&snap(100.0, 102_348)), "100% · 99.9G");
+        assert_eq!(format_title(&snap(100.0, 102_349)), "100% · 100G");
     }
 
     #[test]

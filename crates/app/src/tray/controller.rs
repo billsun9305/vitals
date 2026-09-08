@@ -1,8 +1,14 @@
 //! The Objective-C object that owns the status item, the menu and the timer.
 //!
-//! Everything here runs on the AppKit main thread. The only work it does per
-//! tick is a non-blocking `try_recv` and, when a string actually changed,
-//! one `setTitle:`.
+//! Every method below that touches an ivar runs on the AppKit main thread.
+//! `MainThreadOnly` gets that right for code holding a `&Controller` in Rust,
+//! but it cannot police the Objective-C runtime: a notification centre calls
+//! a selector on whatever thread posts, so `powerChanged:` is entered off the
+//! main thread and does nothing but hop back onto it. Anything registered as
+//! an observer here needs the same treatment.
+//!
+//! The only work done per tick is one power-source read, a non-blocking
+//! `try_recv` and, when a string actually changed, one `setTitle:`.
 //!
 //! Three properties of `vitals-core`'s sampler shape this file:
 //!
@@ -27,7 +33,8 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{
     MainThreadMarker, NSNotification, NSNotificationCenter,
-    NSProcessInfoPowerStateDidChangeNotification, NSString, NSTimer,
+    NSProcessInfoPowerStateDidChangeNotification, NSRunLoop, NSRunLoopCommonModes, NSString,
+    NSTimer,
 };
 use std::cell::{Cell, RefCell};
 use std::sync::Arc;
@@ -101,6 +108,7 @@ define_class!(
             if self.ivars().sampler_dead.get() {
                 return; // the timer is already gone; belt and braces
             }
+            self.refresh_power_source();
             // `try_recv` already returns the newest sample and drops any
             // backlog, so there is deliberately no draining loop here.
             let Some(result) = self.ivars().handle.try_recv() else {
@@ -129,14 +137,32 @@ define_class!(
 
         #[unsafe(method(powerChanged:))]
         fn power_changed(&self, _n: *mut NSNotification) {
-            // Read both: unplugging fires this notification, and the battery
-            // tier is what the cadence table is mostly there for.
+            // Foundation posts this one on the global dispatch queue, not the
+            // main thread (NSProcessInfo.h says so in as many words). Doing
+            // the work here would race `tick:` over every `Cell`/`RefCell`
+            // ivar, and — worse — `sync_timer` would schedule the replacement
+            // poll timer onto a background run loop that is never run, which
+            // stops the menu bar updating for the rest of the session.
+            // So: hop, and do nothing else.
+            //
+            // SAFETY: `self` responds to `powerChangedOnMain`, defined below,
+            // and that selector takes no argument, so the object passed is
+            // null. `performSelectorOnMainThread:` retains the receiver until
+            // the selector has run.
+            unsafe {
+                let _: () = msg_send![
+                    self,
+                    performSelectorOnMainThread: sel!(powerChangedOnMain),
+                    withObject: std::ptr::null_mut::<AnyObject>(),
+                    waitUntilDone: false,
+                ];
+            }
+        }
+
+        #[unsafe(method(powerChangedOnMain))]
+        fn power_changed_on_main(&self) {
             let low = low_power_mode();
-            let batt = on_battery();
-            self.mutate_state(|s| {
-                s.low_power = low;
-                s.on_battery = batt;
-            });
+            self.mutate_state(|s| s.low_power = low);
         }
     }
 
@@ -229,11 +255,16 @@ impl Controller {
         this
     }
 
-    /// Register for the two events that change the sampling cadence.
+    /// Register for the cadence-changing events that have notifications.
     ///
     /// Screen sleep/wake are posted on `NSWorkspace`'s own centre; the
     /// low-power-mode notification is posted on the default centre, so it
     /// must not be registered on the workspace centre or it will never fire.
+    ///
+    /// The fourth input to `TrayState`, `on_battery`, has no notification
+    /// here: `NSProcessInfoPowerStateDidChange` tracks Low Power Mode, and
+    /// IOKit's power-source callback needs a run loop source rather than an
+    /// observer. It is polled in `tick:` instead — see `refresh_power_source`.
     fn observe_notifications(&self) {
         let workspace = NSWorkspace::sharedWorkspace().notificationCenter();
         let default = NSNotificationCenter::defaultCenter();
@@ -258,6 +289,22 @@ impl Controller {
                 Some(NSProcessInfoPowerStateDidChangeNotification),
                 None,
             );
+        }
+    }
+
+    /// Re-read the power source, and touch the cadence only if it moved.
+    ///
+    /// There is no notification for "the charger came out" on the centres
+    /// this object observes, so it is sampled. The read is one IOKit call on
+    /// an already-open service and happens at most once a second, which is
+    /// far below the cost of the sample the same tick is collecting. The
+    /// equality guard matters more than the read does: `mutate_state` signals
+    /// the worker's condvar, so calling it unconditionally would wake the
+    /// sampler thread every single tick and spend the idle budget outright.
+    fn refresh_power_source(&self) {
+        let batt = on_battery();
+        if batt != self.ivars().state.get().on_battery {
+            self.mutate_state(|s| s.on_battery = batt);
         }
     }
 
@@ -296,9 +343,18 @@ impl Controller {
         }
         if let Some(ms) = desired {
             let seconds = f64::from(ms) / 1000.0;
-            // SAFETY: `self` responds to `tick:`; there is no user info.
+            // Built unscheduled and added by hand, because
+            // `scheduledTimerWithTimeInterval:` installs in
+            // `NSDefaultRunLoopMode` only. Tracking an open menu pushes the
+            // run loop into `NSEventTrackingRunLoopMode`, where a default-mode
+            // timer does not fire — so the one moment the cadence deliberately
+            // speeds up to 1 Hz is the one moment the display would freeze.
+            // `NSRunLoopCommonModes` covers both.
+            //
+            // SAFETY: `self` responds to `tick:`; there is no user info; and
+            // `NSRunLoopCommonModes` is Foundation's own constant.
             let timer = unsafe {
-                NSTimer::scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(
+                NSTimer::timerWithTimeInterval_target_selector_userInfo_repeats(
                     seconds,
                     self,
                     sel!(tick:),
@@ -308,6 +364,7 @@ impl Controller {
             };
             // Let the kernel coalesce this wakeup with others already due.
             timer.setTolerance(seconds * 0.25);
+            unsafe { NSRunLoop::currentRunLoop().addTimer_forMode(&timer, NSRunLoopCommonModes) };
             *self.ivars().timer.borrow_mut() = Some(timer);
         }
         self.ivars().timer_period_ms.set(desired);

@@ -2,7 +2,10 @@
 //!
 //! `status_item` is pure and unit-tested; `controller` is the AppKit object
 //! that renders what it produces. Nothing in this module may be touched off
-//! the main thread — `MainThreadMarker` enforces that at compile time.
+//! the main thread. `MainThreadMarker` enforces that for callers holding a
+//! `&Controller`, but not for the Objective-C runtime, which will happily
+//! invoke a registered selector from whatever thread posted the notification;
+//! see `controller`'s note on `powerChanged:`.
 
 mod controller;
 pub mod status_item;
