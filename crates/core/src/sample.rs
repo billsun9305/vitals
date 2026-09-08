@@ -59,13 +59,29 @@ pub struct SamplerHandle {
 }
 
 impl SamplerHandle {
-    /// Non-blocking. Returns `None` when no new sample has arrived; the
-    /// AppKit main thread must never block on this.
+    /// Non-blocking. Returns the **newest** sample, discarding any older ones
+    /// still queued; `None` when nothing new has arrived. The AppKit main
+    /// thread must never block on this.
+    ///
+    /// The channel is unbounded, so returning its front element would make
+    /// the tray display data that falls further and further behind whenever
+    /// the main thread polls slower than the worker samples — under timer
+    /// coalescing, a modal run loop, or just a 1s timer racing the 1s
+    /// menu-open cadence. A display wants the latest value, never a backlog,
+    /// so drain to it. An error is returned as soon as it is seen rather than
+    /// being discarded by a later success.
     pub fn try_recv(&self) -> Option<Result<Sample, String>> {
-        match self.rx.try_recv() {
-            Ok(v) => Some(v),
-            Err(TryRecvError::Empty) => None,
-            Err(TryRecvError::Disconnected) => Some(Err("sampler thread stopped".to_string())),
+        let mut newest: Option<Result<Sample, String>> = None;
+        loop {
+            match self.rx.try_recv() {
+                Ok(Err(e)) => return Some(Err(e)),
+                Ok(ok) => newest = Some(ok),
+                Err(TryRecvError::Empty) => return newest,
+                // Deliver buffered data first; the next call reports the stop.
+                Err(TryRecvError::Disconnected) => {
+                    return newest.or_else(|| Some(Err("sampler thread stopped".to_string())))
+                }
+            }
         }
     }
 }
@@ -183,8 +199,31 @@ mod tests {
         }
         assert!(got.is_some(), "no sample arrived within 2.5s");
 
+        // Parking must actually stop the worker — not merely flip a flag.
+        // The flag round-trip alone is already covered by
+        // cadence::tests::parking_and_unparking_round_trips; asserting it
+        // here again would leave the default suite with no coverage of the
+        // behaviour that matters, and none at all of the unpark/notify path
+        // where every lost-wakeup risk lives.
         cadence.park();
-        assert!(cadence.is_parked());
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        while handle.try_recv().is_some() {} // drain the in-flight sample
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        assert!(
+            handle.try_recv().is_none(),
+            "worker kept sampling after park at a 100ms cadence"
+        );
+
+        // ...and unparking must wake it again.
         cadence.unpark();
+        let mut woke = false;
+        for _ in 0..20 {
+            if handle.try_recv().is_some() {
+                woke = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(woke, "worker never resumed after unpark — lost wakeup");
     }
 }
