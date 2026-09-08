@@ -13,6 +13,13 @@ path = "src/main.rs"
 vitals-core.workspace = true
 serde_json.workspace = true
 clap.workspace = true
+objc2.workspace = true
+objc2-foundation.workspace = true
+objc2-app-kit = { workspace = true, features = [
+  "NSStatusBar", "NSStatusItem", "NSStatusBarButton", "NSButton", "NSControl",
+  "NSResponder", "NSView", "NSMenu", "NSMenuItem", "NSApplication", "NSFont",
+  "NSColor", "NSWorkspace", "NSGraphics", "NSBezierPath", "NSGraphicsContext",
+] }
 
 [dev-dependencies]
 serde_json.workspace = true
