@@ -51,7 +51,9 @@ mod tests {
         assert_eq!(pressure::join_with_and(&["a".into()]), "a");
         assert!(!format!("{:?}", sysctl::mem_pressure_level()).is_empty());
         assert!(!format!("{:?}", thermal::thermal_state()).is_empty());
-        // ring is still a stub; Task 17 fills it in and should add a line here.
+        let mut r: ring::Ring<f32> = ring::Ring::new(1);
+        r.push(1.0);
+        assert_eq!(r.len(), 1);
         assert!(sample::sample_once(50).is_ok());
     }
 }

@@ -45,6 +45,7 @@ use vitals_core::schema::{build_snapshot, now_rfc3339, Snapshot, SnapshotInputs}
 use vitals_core::sysctl::mem_pressure_level;
 use vitals_core::thermal::{low_power_mode, on_battery, thermal_state};
 
+use super::panel::PanelView;
 use super::status_item::{format_title, menu_lines};
 
 /// `NSVariableStatusItemLength`. objc2-app-kit 0.3 does not re-export the
@@ -53,6 +54,10 @@ const NS_VARIABLE_STATUS_ITEM_LENGTH: f64 = -1.0;
 
 /// Number of informational rows above the separator.
 const ROWS: usize = 4;
+
+/// The custom-drawn panel occupies item 0; the informational rows follow it,
+/// so every `itemAtIndex` lookup for a row is offset by this much.
+const PANEL_ROWS: usize = 1;
 
 /// Floor on the poll period. The worker never produces samples faster than
 /// once a second (`cadence::SAMPLE_WINDOW_MS`), so polling faster only burns
@@ -75,6 +80,9 @@ const FAILED_TITLE: &str = "⚠";
 pub struct Ivars {
     status_item: Retained<NSStatusItem>,
     menu: Retained<NSMenu>,
+    /// The custom-drawn dropdown view hosted in item 0. Fed only while the
+    /// menu is open — see `apply_sample` and `menuDidClose:`.
+    panel: Retained<PanelView>,
     handle: SamplerHandle,
     cadence: Arc<Cadence>,
     state: Cell<TrayState>,
@@ -174,11 +182,17 @@ define_class!(
             self.mutate_state(|s| s.menu_open = true);
             // Paint what we already have rather than waiting a tick.
             self.write_rows();
+            if let Some(snapshot) = self.ivars().last_snapshot.borrow().as_ref() {
+                let core_pcts: Vec<f32> = snapshot.cores.iter().map(|c| c.pct).collect();
+                self.ivars().panel.update(core_pcts, snapshot.cpu_pct);
+            }
         }
 
         #[unsafe(method(menuDidClose:))]
         fn menu_did_close(&self, _menu: &NSMenu) {
             self.mutate_state(|s| s.menu_open = false);
+            // Budget rule 3: a closed dropdown carries no history forward.
+            self.ivars().panel.clear_history();
         }
     }
 );
@@ -206,11 +220,20 @@ impl Controller {
             button.setTitle(&NSString::from_str(PLACEHOLDER_TITLE));
         }
 
+        let panel = PanelView::new(mtm);
+
         let menu = NSMenu::new(mtm);
         // The informational rows carry no action, and AppKit's automatic
         // enabling would grey them out anyway; make it explicit so Quit's
         // state does not depend on responder-chain lookup either.
         menu.setAutoenablesItems(false);
+
+        // The panel occupies item 0; everything below shifts down by
+        // `PANEL_ROWS` (see `write_rows`).
+        let panel_item = NSMenuItem::new(mtm);
+        panel_item.setView(Some(&panel));
+        menu.insertItem_atIndex(&panel_item, 0);
+
         for _ in 0..ROWS {
             let item = NSMenuItem::new(mtm);
             item.setEnabled(false);
@@ -221,6 +244,7 @@ impl Controller {
         let ivars = Ivars {
             status_item: status_item.clone(),
             menu: menu.clone(),
+            panel,
             handle,
             cadence,
             state: Cell::new(state),
@@ -393,8 +417,13 @@ impl Controller {
 
         *self.ivars().last_error.borrow_mut() = None;
         self.set_title(&format_title(&snapshot));
+        let menu_open = self.ivars().state.get().menu_open;
+        if menu_open {
+            let core_pcts: Vec<f32> = snapshot.cores.iter().map(|c| c.pct).collect();
+            self.ivars().panel.update(core_pcts, snapshot.cpu_pct);
+        }
         *self.ivars().last_snapshot.borrow_mut() = Some(snapshot);
-        if self.ivars().state.get().menu_open {
+        if menu_open {
             self.write_rows();
         }
         // The first sample retires the fast start-up poll.
@@ -476,7 +505,8 @@ impl Controller {
             return;
         }
         for (index, line) in rows.iter().enumerate() {
-            if let Some(item) = self.ivars().menu.itemAtIndex(index as isize) {
+            // Item 0 is the panel; the informational rows start at `PANEL_ROWS`.
+            if let Some(item) = self.ivars().menu.itemAtIndex((index + PANEL_ROWS) as isize) {
                 item.setTitle(&NSString::from_str(line));
                 item.setHidden(line.is_empty());
             }
