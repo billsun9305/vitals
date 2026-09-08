@@ -141,6 +141,31 @@ mod tests {
     }
 
     #[test]
+    fn the_requested_interval_actually_gates_the_sample_window() {
+        // Sample.sample_ms is a straight echo of the caller's argument, so
+        // asserting on it proves only that the number survived the round
+        // trip — a sampler that ignored interval_ms entirely and used a
+        // fixed window would pass that check. Time it instead.
+        use std::time::Instant;
+        let mut s = SamplerSession::new().expect("Sampler::new() failed");
+        let _ = s.next(100); // first call primes IOReport; don't time it
+
+        let t = Instant::now();
+        s.next(500).expect("long sample failed");
+        let long = t.elapsed();
+
+        let t = Instant::now();
+        s.next(50).expect("short sample failed");
+        let short = t.elapsed();
+
+        // Generous bounds: this must not flake on a loaded machine. The
+        // load-bearing claim is the lower bound on `long` — the sampler
+        // cannot return early, so a hardcoded short window fails here.
+        assert!(long.as_millis() >= 450, "500ms sample took only {long:?}");
+        assert!(short.as_millis() < 300, "50ms sample took {short:?}");
+    }
+
+    #[test]
     fn the_worker_delivers_samples_and_parks_on_demand() {
         use crate::cadence::Cadence;
         use std::sync::Arc;
