@@ -48,6 +48,70 @@ pub fn sample_once(interval_ms: u32) -> Result<Sample, String> {
     SamplerSession::new()?.next(interval_ms)
 }
 
+use crate::cadence::Cadence;
+use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::sync::Arc;
+
+/// The main thread's end of the sampler worker.
+pub struct SamplerHandle {
+    rx: Receiver<Result<Sample, String>>,
+    pub cadence: Arc<Cadence>,
+}
+
+impl SamplerHandle {
+    /// Non-blocking. Returns `None` when no new sample has arrived; the
+    /// AppKit main thread must never block on this.
+    pub fn try_recv(&self) -> Option<Result<Sample, String>> {
+        match self.rx.try_recv() {
+            Ok(v) => Some(v),
+            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Disconnected) => Some(Err("sampler thread stopped".to_string())),
+        }
+    }
+}
+
+/// Start the sampler worker.
+///
+/// The `SamplerSession` is built *inside* the closure: `macmon::Sampler` is
+/// `!Send`, so it cannot be constructed here and moved. `Sample` is plain
+/// data and crosses the channel freely.
+pub fn spawn_sampler(cadence: Arc<Cadence>) -> SamplerHandle {
+    let (tx, rx) = mpsc::channel();
+    let worker_cadence = Arc::clone(&cadence);
+
+    std::thread::Builder::new()
+        .name("vitals-sampler".to_string())
+        .spawn(move || {
+            let mut session = match SamplerSession::new() {
+                Ok(s) => s,
+                Err(e) => {
+                    let _ = tx.send(Err(e));
+                    return;
+                }
+            };
+            loop {
+                // Park rather than spin: zero wakeups while the display sleeps.
+                worker_cadence.wait_while_parked();
+                let interval = worker_cadence.interval_ms();
+                match session.next(interval) {
+                    Ok(sample) => {
+                        if tx.send(Ok(sample)).is_err() {
+                            return; // main thread went away
+                        }
+                    }
+                    Err(e) => {
+                        if tx.send(Err(e)).is_err() {
+                            return;
+                        }
+                    }
+                }
+            }
+        })
+        .expect("failed to spawn vitals-sampler thread");
+
+    SamplerHandle { rx, cadence }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -74,5 +138,28 @@ mod tests {
     fn sample_is_send_so_it_can_cross_a_channel() {
         fn assert_send<T: Send>() {}
         assert_send::<Sample>();
+    }
+
+    #[test]
+    fn the_worker_delivers_samples_and_parks_on_demand() {
+        use crate::cadence::Cadence;
+        use std::sync::Arc;
+
+        let cadence = Arc::new(Cadence::new(100));
+        let handle = super::spawn_sampler(Arc::clone(&cadence));
+
+        let mut got = None;
+        for _ in 0..50 {
+            if let Some(v) = handle.try_recv() {
+                got = Some(v.expect("worker reported an error"));
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(got.is_some(), "no sample arrived within 2.5s");
+
+        cadence.park();
+        assert!(cadence.is_parked());
+        cadence.unpark();
     }
 }
