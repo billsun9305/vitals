@@ -115,6 +115,7 @@ pub fn spawn_sampler(cadence: Arc<Cadence>) -> SamplerHandle {
                 // pin the worker inside a 30s call on low power and make an
                 // open menu wait that long to take effect.
                 let window = interval.min(crate::cadence::SAMPLE_WINDOW_MS);
+                let tick = std::time::Instant::now();
                 match session.next(window) {
                     Ok(sample) => {
                         if tx.send(Ok(sample)).is_err() {
@@ -127,7 +128,14 @@ pub fn spawn_sampler(cadence: Arc<Cadence>) -> SamplerHandle {
                         }
                     }
                 }
-                worker_cadence.wait_between_samples(interval.saturating_sub(window), interval);
+                // Sleep the rest of the *measured* iteration, not
+                // `interval - window`. get_metrics measures from the last
+                // sample point rather than blocking afresh, so once a gap
+                // has already elapsed it returns in ~12ms — and subtracting
+                // a window that was never spent made every period come out
+                // a full window short (a 5s cadence ticking every 4s).
+                let spent = tick.elapsed().as_millis().min(u32::MAX as u128) as u32;
+                worker_cadence.wait_between_samples(interval.saturating_sub(spent), interval);
             }
         })
         .expect("failed to spawn vitals-sampler thread");
