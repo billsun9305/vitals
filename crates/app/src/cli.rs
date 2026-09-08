@@ -68,6 +68,19 @@ pub enum Command {
         #[arg(short = 'n', long = "count", default_value_t = 0)]
         count: u64,
     },
+    /// Serve the JSON API and the dashboard on localhost.
+    Serve {
+        #[arg(long, default_value_t = 9876)]
+        port: u16,
+        /// Do not open a browser window.
+        #[arg(long)]
+        no_open: bool,
+    },
+    /// Start the server if needed and open the dashboard.
+    Dashboard {
+        #[arg(long, default_value_t = 9876)]
+        port: u16,
+    },
 }
 
 /// Collect a snapshot with every field populated.
@@ -90,11 +103,19 @@ pub fn run_snapshot(interval_ms: u32, human: bool) -> Result<(), String> {
     if human {
         println!(
             "cpu {:.1}%  gpu {:.1}%  mem {}/{} MB  swap {} MB  {:.2} W  {:.1}°C",
-            snap.cpu_pct, snap.gpu_pct, snap.mem_used_mb, snap.mem_total_mb,
-            snap.swap_used_mb, snap.power_total_w, snap.temp_cpu_c
+            snap.cpu_pct,
+            snap.gpu_pct,
+            snap.mem_used_mb,
+            snap.mem_total_mb,
+            snap.swap_used_mb,
+            snap.power_total_w,
+            snap.temp_cpu_c
         );
     } else {
-        println!("{}", serde_json::to_string_pretty(&snap).map_err(|e| e.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&snap).map_err(|e| e.to_string())?
+        );
     }
     Ok(())
 }
@@ -128,11 +149,17 @@ pub fn run_top(n: usize, human: bool) -> Result<(), String> {
             // Column widths here must match the row format on the next line.
             println!("    PID     CPU%    MEM MB  NAME");
             for r in rows.iter() {
-                println!("{:>7}  {:>7.1}  {:>8}  {}", r.pid, r.cpu_pct, r.mem_mb, r.name);
+                println!(
+                    "{:>7}  {:>7.1}  {:>8}  {}",
+                    r.pid, r.cpu_pct, r.mem_mb, r.name
+                );
             }
         }
     } else {
-        println!("{}", serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?
+        );
     }
     Ok(())
 }
@@ -158,7 +185,9 @@ pub fn exit_code_for(state: Severity) -> i32 {
 pub fn collect_pressure(interval_ms: u32) -> Result<Verdict, String> {
     let procs_thread = std::thread::spawn(collect);
     let snap = collect_snapshot(interval_ms)?;
-    let rows = procs_thread.join().map_err(|_| "process collector panicked".to_string())?;
+    let rows = procs_thread
+        .join()
+        .map_err(|_| "process collector panicked".to_string())?;
     let (by_cpu, by_mem) = rank(rows, 1);
 
     let now_s = history::unix_now_s();
@@ -196,7 +225,10 @@ pub fn run_pressure(interval_ms: u32, human: bool, use_exit_code: bool) -> Resul
     if human {
         println!("{}", verdict.summary);
     } else {
-        println!("{}", serde_json::to_string_pretty(&verdict).map_err(|e| e.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&verdict).map_err(|e| e.to_string())?
+        );
     }
     if use_exit_code {
         std::process::exit(exit_code_for(verdict.state));
