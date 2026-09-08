@@ -43,15 +43,36 @@ fn wait_until_ready(port: u16) {
     }
 }
 
+/// `--path-as-is` stops curl from squashing `/../` sequences itself before
+/// the request ever leaves the client, which would otherwise make it
+/// impossible to test how the server handles a literal `..` on the wire.
 fn get(port: u16, path: &str) -> (u16, String) {
     let url = format!("http://127.0.0.1:{port}{path}");
     let out = Command::new("curl")
-        .args(["-s", "-o", "/dev/stdout", "-w", "\n%{http_code}", &url])
+        .args([
+            "-s",
+            "--path-as-is",
+            "-o",
+            "/dev/stdout",
+            "-w",
+            "\n%{http_code}",
+            &url,
+        ])
         .output()
         .unwrap();
     let text = String::from_utf8_lossy(&out.stdout).to_string();
     let (body, code) = text.rsplit_once('\n').unwrap();
     (code.trim().parse().unwrap(), body.to_string())
+}
+
+/// Pull the first built-asset reference out of the served `index.html`, e.g.
+/// `src="./assets/index-abc123.js"` -> `/assets/index-abc123.js`. Vite hashes
+/// asset filenames, so this reads the real name out of the page rather than
+/// hardcoding one.
+fn extract_first_asset_href(html: &str) -> Option<String> {
+    let start = html.find("assets/")?;
+    let end = html[start..].find('"')? + start;
+    Some(format!("/{}", &html[start..end]))
 }
 
 #[test]
@@ -83,4 +104,97 @@ fn routing_is_a_pure_function() {
         Route::Asset("assets/app.js".into())
     );
     assert_eq!(route("/../etc/passwd"), Route::NotFound);
+}
+
+/// `route()`'s traversal check must run on the *decoded* path. A raw
+/// substring check for `..` (the stub-era behavior) never sees the `..` in
+/// a percent-encoded or mixed-case-hex request, so it lets it through as a
+/// normal `Route::Asset`. This is exactly the gap the doc comment on
+/// `route()` used to warn about — harmless only as long as `assets::serve`
+/// stubbed out every path, which Task 19 replaces with a real file server.
+#[test]
+fn route_rejects_percent_encoded_and_backslash_traversal() {
+    use vitals::serve::{route, Route};
+    assert_eq!(
+        route("/%2e%2e/%2e%2e/etc/passwd"),
+        Route::NotFound,
+        "lowercase percent-encoded .. must be caught after decoding"
+    );
+    assert_eq!(
+        route("/%2E%2E/%2E%2E/etc/passwd"),
+        Route::NotFound,
+        "uppercase-hex percent-encoding must decode the same as lowercase"
+    );
+    assert_eq!(
+        route("/%2e%2E/%2E%2e/etc/passwd"),
+        Route::NotFound,
+        "mixed-case hex digits must still decode to .."
+    );
+    assert_eq!(
+        route("/..%2f..%2fetc/passwd"),
+        Route::NotFound,
+        "partially encoded traversal (literal .. + encoded slash)"
+    );
+    assert_eq!(
+        route("/../../etc/passwd"),
+        Route::NotFound,
+        "plain literal traversal must still be rejected"
+    );
+    assert_eq!(
+        route("/..%5c..%5cetc%5cpasswd"),
+        Route::NotFound,
+        "encoded backslash must decode and be rejected too"
+    );
+    assert_eq!(
+        route("/assets\\..\\..\\etc\\passwd"),
+        Route::NotFound,
+        "raw backslash segments must be rejected"
+    );
+    // A legitimate nested asset path must still route normally.
+    assert_eq!(
+        route("/assets/index-abc123.js"),
+        Route::Asset("assets/index-abc123.js".into())
+    );
+}
+
+/// End-to-end: hit a live server with the same traversal attempts over real
+/// HTTP and confirm neither a 200 nor any file content comes back. This is
+/// the check that actually matters once `assets::serve` stops being a stub
+/// that 404s unconditionally.
+#[test]
+fn path_traversal_over_http_is_rejected_and_leaks_nothing() {
+    let _s = start(9881);
+    for p in [
+        "/%2e%2e/%2e%2e/etc/passwd",
+        "/../../etc/passwd",
+        "/..%2f..%2fetc/passwd",
+    ] {
+        let (code, body) = get(9881, p);
+        assert_eq!(code, 404, "expected 404 for {p}, got {code}");
+        assert!(
+            !body.contains("root:"),
+            "response for {p} looks like it leaked /etc/passwd: {body}"
+        );
+    }
+}
+
+/// The positive case that justifies the negative ones above: a real,
+/// embedded asset referenced from the served `index.html` must still come
+/// back with a 200. A traversal fix that also breaks legitimate nested
+/// asset paths (e.g. by over-eagerly rejecting any path with a `.` in it)
+/// would pass every test above and still be useless.
+#[test]
+fn a_real_embedded_asset_is_served() {
+    let _s = start(9882);
+    let (index_code, index_body) = get(9882, "/");
+    assert_eq!(
+        index_code, 200,
+        "index route must serve the built dashboard"
+    );
+    let asset_path = extract_first_asset_href(&index_body).expect(
+        "index.html should reference at least one built asset under assets/ \
+         (did you run `make dashboard` before the tests?)",
+    );
+    let (code, _) = get(9882, &asset_path);
+    assert_eq!(code, 200, "expected referenced asset {asset_path} to serve");
 }

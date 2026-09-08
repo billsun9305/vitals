@@ -22,21 +22,58 @@ pub enum Route {
     NotFound,
 }
 
-/// Pure request routing. Rejects any asset path containing a literal `..`
-/// segment, which blocks naive traversal attempts, but the check runs on
-/// the raw path with no percent-decoding first — an encoded form such as
-/// `%2e%2e` is not caught here. No live exploit today: `assets::serve` is
-/// still a stub that always 404s regardless of path (see `assets.rs`). The
-/// real asset server (Task 19) must decode the path before checking it, or
-/// otherwise close this gap.
+/// Decode `%XX` percent-escapes in a request path. Hex digits are matched
+/// case-insensitively (`%2e` and `%2E` decode the same), so this alone
+/// collapses one whole family of traversal-by-encoding tricks. A malformed
+/// `%` sequence (missing or non-hex digits, or a `%` with fewer than two
+/// bytes left in the string) is passed through untouched rather than
+/// rejected outright: it can never *produce* a `..` or `\`, which is the
+/// only thing `route()` cares about, so treating it strictly is unnecessary.
+fn percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = (bytes[i + 1] as char).to_digit(16);
+            let lo = (bytes[i + 2] as char).to_digit(16);
+            if let (Some(h), Some(l)) = (hi, lo) {
+                out.push(((h * 16) + l) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Pure request routing.
+///
+/// The path is percent-decoded *before* the traversal check, so an encoded
+/// form like `%2e%2e` (any hex case) is caught exactly like a literal `..`.
+/// Backslash is rejected outright too — Unix path lookups do not treat it as
+/// a separator, but nothing here needs to permit it in a legitimate asset
+/// path, and rejecting it removes a whole class of "does the underlying
+/// matcher treat `\` as `/`" questions before they can matter.
+///
+/// This check is defence in depth, not the defence: `assets::serve` only
+/// ever resolves a path against the fixed set of files embedded at compile
+/// time (`include_dir!`), so there is no filesystem to escape to even if a
+/// `..` slipped through here. See `assets.rs`.
 pub fn route(path: &str) -> Route {
     let path = path.split('?').next().unwrap_or("");
-    match path {
+    let decoded = percent_decode(path);
+    if decoded.contains("..") || decoded.contains('\\') {
+        return Route::NotFound;
+    }
+    match decoded.as_str() {
         "/" | "/index.html" => Route::Index,
         "/api/snapshot" => Route::Snapshot,
         "/api/top" => Route::Top,
         "/api/pressure" => Route::Pressure,
-        p if p.starts_with('/') && !p.contains("..") && p.len() > 1 => {
+        p if p.starts_with('/') && p.len() > 1 => {
             Route::Asset(p.trim_start_matches('/').to_string())
         }
         _ => Route::NotFound,

@@ -1,12 +1,23 @@
 BIN := target/release/vitals
 PREFIX ?= /usr/local
 
-.PHONY: build test install uninstall fmt lint
+.PHONY: build test install uninstall fmt lint dashboard
 
-build:
+# The React dashboard `crates/app/src/serve/assets.rs` embeds via
+# `include_dir!`. That macro only needs `dashboard/dist` to exist (a fresh
+# clone has it, as a placeholder holding just `.gitkeep` — see
+# `.gitignore`), so `cargo check`/`cargo build` work without this target.
+# But a *useful* binary needs the real build output in there, so both
+# `build` and `test` depend on it: `cargo test --workspace` alone, without
+# ever running this, will fail the dashboard-asset integration test in
+# `crates/app/tests/serve.rs` for the same reason — no built assets to serve.
+dashboard:
+	cd dashboard && npm ci && npm run build
+
+build: dashboard
 	cargo build --release
 
-test:
+test: dashboard
 	cargo test --workspace
 
 fmt:
