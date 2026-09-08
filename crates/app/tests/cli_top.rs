@@ -37,3 +37,29 @@ fn top_default_n_is_five() {
     let v = run(&["top"]);
     assert_eq!(v["by_cpu"].as_array().unwrap().len(), 5);
 }
+
+#[test]
+fn by_cpu_is_sorted_descending() {
+    // by_mem's ordering is asserted separately; without this, flipping only
+    // the CPU comparator in procs::rank would pass every other test, since
+    // the rest check lengths and field types but never cpu_pct's order.
+    let v = run(&["top", "-n", "5"]);
+    let cpu: Vec<f64> = v["by_cpu"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["cpu_pct"].as_f64().unwrap())
+        .collect();
+    assert!(
+        cpu.windows(2).all(|w| w[0] >= w[1]),
+        "by_cpu is not descending: {cpu:?}"
+    );
+    // Descending alone is not enough: a comparator flipped to ascending
+    // returns the five idlest processes, all at 0.0%, which satisfies
+    // "descending" vacuously. The busiest process on a running Mac is never
+    // at zero, so this is what actually pins the direction.
+    assert!(
+        cpu[0] > 0.0,
+        "busiest process reported 0% CPU — ranking is inverted: {cpu:?}"
+    );
+}

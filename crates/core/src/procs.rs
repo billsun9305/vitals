@@ -13,6 +13,15 @@ use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind, MINIMUM
 /// How far up the parent chain `resolve_app` will walk.
 const MAX_PARENT_DEPTH: usize = 8;
 
+/// The window per-process CPU percentages are measured over — exactly the
+/// interval `collect` sleeps between its two refreshes.
+///
+/// Derived from `sysinfo` rather than copied, so a change upstream cannot
+/// leave callers reporting a window that is no longer the real one. A
+/// hand-written literal here would still compile and still pass every test
+/// while quietly lying about how the numbers were measured.
+pub const CPU_WINDOW_MS: u32 = MINIMUM_CPU_UPDATE_INTERVAL.as_millis() as u32;
+
 /// Raw per-process facts, before app resolution.
 #[derive(Debug, Clone)]
 pub struct RawProc {

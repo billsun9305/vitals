@@ -75,7 +75,7 @@ pub fn run_snapshot(interval_ms: u32, human: bool) -> Result<(), String> {
     Ok(())
 }
 
-use vitals_core::procs::{collect, rank, to_rows};
+use vitals_core::procs::{collect, rank, to_rows, CPU_WINDOW_MS};
 use vitals_core::schema::TopReport;
 
 pub fn collect_top(n: usize) -> Result<TopReport, String> {
@@ -87,7 +87,7 @@ pub fn collect_top(n: usize) -> Result<TopReport, String> {
     Ok(TopReport {
         schema_version: vitals_core::schema::SCHEMA_VERSION,
         sampled_at: now_rfc3339(),
-        sample_ms: 200, // sysinfo::MINIMUM_CPU_UPDATE_INTERVAL
+        sample_ms: CPU_WINDOW_MS,
         by_cpu: to_rows(&by_cpu),
         by_mem: to_rows(&by_mem),
     })
@@ -96,9 +96,15 @@ pub fn collect_top(n: usize) -> Result<TopReport, String> {
 pub fn run_top(n: usize, human: bool) -> Result<(), String> {
     let report = collect_top(n)?;
     if human {
-        println!("{:>7}  {:>7}  {:>8}  {}", "PID", "CPU%", "MEM MB", "NAME");
-        for r in report.by_cpu.iter().chain(report.by_mem.iter()) {
-            println!("{:>7}  {:>7.1}  {:>8}  {}", r.pid, r.cpu_pct, r.mem_mb, r.name);
+        // Two rankings, labelled. Concatenating them under one header lets
+        // the same pid appear twice with nothing saying which column put it
+        // there, which reads as a duplicate rather than as two answers.
+        for (title, rows) in [("BY CPU", &report.by_cpu), ("BY MEM", &report.by_mem)] {
+            println!("{title}");
+            println!("{:>7}  {:>7}  {:>8}  {}", "PID", "CPU%", "MEM MB", "NAME");
+            for r in rows.iter() {
+                println!("{:>7}  {:>7.1}  {:>8}  {}", r.pid, r.cpu_pct, r.mem_mb, r.name);
+            }
         }
     } else {
         println!("{}", serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?);
