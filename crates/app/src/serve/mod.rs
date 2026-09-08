@@ -22,7 +22,13 @@ pub enum Route {
     NotFound,
 }
 
-/// Pure request routing, including traversal rejection.
+/// Pure request routing. Rejects any asset path containing a literal `..`
+/// segment, which blocks naive traversal attempts, but the check runs on
+/// the raw path with no percent-decoding first — an encoded form such as
+/// `%2e%2e` is not caught here. No live exploit today: `assets::serve` is
+/// still a stub that always 404s regardless of path (see `assets.rs`). The
+/// real asset server (Task 19) must decode the path before checking it, or
+/// otherwise close this gap.
 pub fn route(path: &str) -> Route {
     let path = path.split('?').next().unwrap_or("");
     match path {
@@ -41,6 +47,13 @@ fn json_header() -> Header {
     Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap()
 }
 
+/// Build a `{"error": "..."}` body with the message properly JSON-escaped,
+/// so an error string containing a `"` or `\` still produces valid JSON —
+/// every agent-facing response on this server is contractually valid JSON.
+fn error_body(e: &str) -> String {
+    serde_json::json!({ "error": e }).to_string()
+}
+
 /// Latest snapshot, refreshed by a background sampler while anyone is watching.
 struct Cache {
     latest: Mutex<Option<Snapshot>>,
@@ -53,25 +66,30 @@ pub fn run(port: u16, open_browser: bool) -> Result<(), String> {
         last_request: Mutex::new(Instant::now()),
     });
 
-    // 200ms, not the 1s "menu open" tray cadence: `spawn_sampler`'s worker
-    // measures each sample over `interval.min(SAMPLE_WINDOW_MS)`, so a 1s
-    // interval makes even the very first sample take a full second to
-    // measure — on top of the ~600ms `Sampler::new()` already costs, that
-    // leaves a freshly started server unable to answer `/api/snapshot`
-    // inside a couple of seconds. 200ms matches the CLI's own
-    // `DEFAULT_INTERVAL_MS` and keeps every sample, first included, quick
-    // enough for a polling browser tab.
-    let cadence = Arc::new(Cadence::new(DEFAULT_INTERVAL_MS));
+    // Per the brief: 1s between samples, matching the tray's own "menu
+    // open" cadence. The first sample is unavoidably slow (Sampler::new()
+    // plus one measurement window), and the test harness budgets startup
+    // time for that instead of forcing a faster steady-state cadence here.
+    // The surplus samples a tighter cadence would produce are discarded
+    // anyway: the cache thread below polls at 250ms and keeps only the
+    // newest one.
+    let cadence = Arc::new(Cadence::new(1_000));
     let handle = spawn_sampler(Arc::clone(&cadence));
     let bg = Arc::clone(&cache);
     std::thread::spawn(move || loop {
         // Park the sampler when nobody has polled for 10s: a closed tab
         // should cost nothing, which is the whole argument for this face.
+        // Both `park()` and `unpark()` take a mutex and notify a condvar
+        // unconditionally, so only call the one that actually changes
+        // state — otherwise an idle, already-parked server would wake the
+        // sampler thread on every 250ms tick forever.
         let idle = bg.last_request.lock().unwrap().elapsed() > Duration::from_secs(10);
-        if idle {
-            cadence.park();
-        } else {
-            cadence.unpark();
+        if idle != cadence.is_parked() {
+            if idle {
+                cadence.park();
+            } else {
+                cadence.unpark();
+            }
         }
 
         if let Some(Ok(sample)) = handle.try_recv() {
@@ -113,14 +131,14 @@ pub fn run(port: u16, open_browser: bool) -> Result<(), String> {
             Route::Top => match crate::cli::collect_top(10) {
                 Ok(t) => Response::from_string(serde_json::to_string(&t).unwrap())
                     .with_header(json_header()),
-                Err(e) => Response::from_string(format!(r#"{{"error":"{e}"}}"#))
+                Err(e) => Response::from_string(error_body(&e))
                     .with_header(json_header())
                     .with_status_code(500),
             },
             Route::Pressure => match crate::cli::collect_pressure(DEFAULT_INTERVAL_MS) {
                 Ok(v) => Response::from_string(serde_json::to_string(&v).unwrap())
                     .with_header(json_header()),
-                Err(e) => Response::from_string(format!(r#"{{"error":"{e}"}}"#))
+                Err(e) => Response::from_string(error_body(&e))
                     .with_header(json_header())
                     .with_status_code(500),
             },
@@ -134,3 +152,16 @@ pub fn run(port: u16, open_browser: bool) -> Result<(), String> {
 }
 
 mod assets;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn error_body_escapes_quotes_and_backslashes_into_valid_json() {
+        let body = error_body(r#"bad path: "..\weird""#);
+        let v: serde_json::Value =
+            serde_json::from_str(&body).expect("error body must be valid JSON");
+        assert_eq!(v["error"], r#"bad path: "..\weird""#);
+    }
+}
