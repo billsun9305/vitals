@@ -257,6 +257,15 @@ impl Controller {
 
     /// Register for the cadence-changing events that have notifications.
     ///
+    /// Both workspace handlers write main-thread-only ivars, which is only
+    /// safe because NSWorkspace delivers on the main thread. Apple does not
+    /// document that as firmly as NSProcessInfo documents the opposite, and
+    /// assuming it is what produced this file's one main-thread bug, so it
+    /// was measured rather than assumed: instrumenting both handlers and
+    /// running `pmset displaysleepnow` printed `is_main=true` for the sleep
+    /// and the wake. If either ever needs to do more than flip a bool, hop
+    /// to the main thread the way `powerChanged:` does.
+    ///
     /// Screen sleep/wake are posted on `NSWorkspace`'s own centre; the
     /// low-power-mode notification is posted on the default centre, so it
     /// must not be registered on the workspace centre or it will never fire.
