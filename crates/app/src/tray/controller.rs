@@ -36,7 +36,7 @@ use vitals_core::host::{load_avg, uptime_s};
 use vitals_core::sample::{spawn_sampler, Sample, SamplerHandle};
 use vitals_core::schema::{build_snapshot, now_rfc3339, Snapshot, SnapshotInputs};
 use vitals_core::sysctl::mem_pressure_level;
-use vitals_core::thermal::{low_power_mode, thermal_state};
+use vitals_core::thermal::{low_power_mode, on_battery, thermal_state};
 
 use super::status_item::{format_title, menu_lines};
 
@@ -129,8 +129,14 @@ define_class!(
 
         #[unsafe(method(powerChanged:))]
         fn power_changed(&self, _n: *mut NSNotification) {
+            // Read both: unplugging fires this notification, and the battery
+            // tier is what the cadence table is mostly there for.
             let low = low_power_mode();
-            self.mutate_state(|s| s.low_power = low);
+            let batt = on_battery();
+            self.mutate_state(|s| {
+                s.low_power = low;
+                s.on_battery = batt;
+            });
         }
     }
 
@@ -155,7 +161,7 @@ impl Controller {
     pub fn new(mtm: MainThreadMarker) -> Retained<Self> {
         let state = TrayState {
             menu_open: false,
-            on_battery: false,
+            on_battery: on_battery(),
             low_power: low_power_mode(),
             display_asleep: false,
         };
