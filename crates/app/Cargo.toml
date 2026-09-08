@@ -1,0 +1,19 @@
+[package]
+name = "vitals"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "vitals"
+path = "src/main.rs"
+
+[dependencies]
+vitals-core.workspace = true
+serde_json.workspace = true
+clap.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+macmon.workspace = true

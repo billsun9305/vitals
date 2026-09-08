@@ -1,0 +1,31 @@
+[workspace]
+resolver = "2"
+members = ["crates/core", "crates/app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+license = "MIT"
+repository = "https://github.com/billsun9305/vitals"
+
+[workspace.dependencies]
+vitals-core = { path = "crates/core" }
+macmon = { version = "0.8", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+libc = "0.2"
+time = { version = "0.3", default-features = false, features = ["std", "formatting"] }
+sysinfo = "0.39"
+libproc = "0.14"
+clap = { version = "4", features = ["derive"] }
+objc2 = "=0.6.4"
+objc2-foundation = "=0.3.2"
+objc2-app-kit = "=0.3.2"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+opt-level = "s"

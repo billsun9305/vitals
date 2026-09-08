@@ -1,0 +1,16 @@
+[package]
+name = "vitals-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+macmon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+libc.workspace = true
+time.workspace = true
+sysinfo.workspace = true
+libproc.workspace = true
+objc2-foundation.workspace = true
