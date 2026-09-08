@@ -35,12 +35,20 @@ fn worker_period_matches_the_requested_interval() {
             std::thread::sleep(Duration::from_millis(20));
         }
         c.park();
-        assert!(stamps.len() >= 4, "only {} samples for interval {interval}", stamps.len());
+        assert!(
+            stamps.len() >= 4,
+            "only {} samples for interval {interval}",
+            stamps.len()
+        );
 
         // Skip the first delta: the very first get_metrics has no prior
         // sample point, so it really does block for the whole window and
         // that one iteration is legitimately short.
-        let deltas: Vec<u128> = stamps.windows(2).skip(1).map(|w| (w[1] - w[0]).as_millis()).collect();
+        let deltas: Vec<u128> = stamps
+            .windows(2)
+            .skip(1)
+            .map(|w| (w[1] - w[0]).as_millis())
+            .collect();
         println!("interval={interval}ms -> steady-state deltas {deltas:?}");
         for d in deltas {
             let off = (d as i128 - interval as i128).abs();

@@ -39,7 +39,11 @@ impl SamplerSession {
             .sampler
             .get_metrics(interval_ms)
             .map_err(|e| format!("get_metrics failed: {e}"))?;
-        Ok(Sample { metrics, host: self.host.clone(), sample_ms: interval_ms })
+        Ok(Sample {
+            metrics,
+            host: self.host.clone(),
+            sample_ms: interval_ms,
+        })
     }
 }
 
@@ -151,10 +155,16 @@ mod tests {
     fn sample_once_returns_a_plausible_sample() {
         let s = sample_once(150).expect("sampling failed");
         assert_eq!(s.sample_ms, 150);
-        assert!(s.metrics.memory.ram_total > 0, "ram_total should be non-zero");
+        assert!(
+            s.metrics.memory.ram_total > 0,
+            "ram_total should be non-zero"
+        );
         assert!(!s.host.chip.is_empty());
-        assert!((0.0..=1.01).contains(&s.metrics.cpu_active_ratio),
-                "active ratio out of range: {}", s.metrics.cpu_active_ratio);
+        assert!(
+            (0.0..=1.01).contains(&s.metrics.cpu_active_ratio),
+            "active ratio out of range: {}",
+            s.metrics.cpu_active_ratio
+        );
     }
 
     #[test]
@@ -198,7 +208,10 @@ mod tests {
 
     /// Helper: poll for a sample, returning how long it took to arrive.
     #[cfg(test)]
-    fn wait_for_sample(h: &SamplerHandle, budget: std::time::Duration) -> Option<std::time::Duration> {
+    fn wait_for_sample(
+        h: &SamplerHandle,
+        budget: std::time::Duration,
+    ) -> Option<std::time::Duration> {
         let t = std::time::Instant::now();
         while t.elapsed() < budget {
             if h.try_recv().is_some() {

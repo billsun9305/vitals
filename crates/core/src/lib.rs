@@ -36,12 +36,15 @@ mod tests {
         // Pinned, not just referenced: this is the window sysinfo measures
         // per-process CPU over, and `top` reports it as sample_ms.
         assert_eq!(procs::CPU_WINDOW_MS, 200);
-        assert_eq!(cadence::interval_for(cadence::TrayState {
-            menu_open: true,
-            on_battery: false,
-            low_power: false,
-            display_asleep: false,
-        }), 1_000);
+        assert_eq!(
+            cadence::interval_for(cadence::TrayState {
+                menu_open: true,
+                on_battery: false,
+                low_power: false,
+                display_asleep: false,
+            }),
+            1_000
+        );
         assert_eq!(cadence::SAMPLE_WINDOW_MS, 1_000);
         assert!(host::ncpu() >= 1);
         assert!(history::unix_now_s() > 0);

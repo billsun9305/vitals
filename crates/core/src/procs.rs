@@ -8,7 +8,9 @@ use crate::schema::ProcRow;
 use libproc::proc_pid::pidinfo;
 use libproc::task_info::TaskInfo;
 use std::collections::HashMap;
-use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind, MINIMUM_CPU_UPDATE_INTERVAL};
+use sysinfo::{
+    ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind, MINIMUM_CPU_UPDATE_INTERVAL,
+};
 
 /// How far up the parent chain `resolve_app` will walk.
 const MAX_PARENT_DEPTH: usize = 8;
@@ -59,7 +61,11 @@ pub fn app_name(exe: &str) -> Option<String> {
     }
     let idx = exe.find(".app/")?;
     let name = exe[..idx].rsplit('/').next()?;
-    if name.is_empty() { None } else { Some(name.to_string()) }
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    }
 }
 
 /// Walk from `start` up the parent chain, returning the first bundle name found.
@@ -101,14 +107,17 @@ pub fn collect() -> Vec<ProcSample> {
         .iter()
         .map(|(pid, p)| {
             let pid = pid.as_u32();
-            (pid, RawProc {
+            (
                 pid,
-                parent: p.parent().map(|p| p.as_u32()),
-                name: p.name().to_string_lossy().into_owned(),
-                exe: p.exe().map(|e| e.to_string_lossy().into_owned()),
-                cpu_pct: p.cpu_usage(),
-                mem_bytes: p.memory(),
-            })
+                RawProc {
+                    pid,
+                    parent: p.parent().map(|p| p.as_u32()),
+                    name: p.name().to_string_lossy().into_owned(),
+                    exe: p.exe().map(|e| e.to_string_lossy().into_owned()),
+                    cpu_pct: p.cpu_usage(),
+                    mem_bytes: p.memory(),
+                },
+            )
         })
         .collect();
 
@@ -131,7 +140,9 @@ pub fn collect() -> Vec<ProcSample> {
 pub fn rank(rows: Vec<ProcSample>, n: usize) -> (Vec<ProcSample>, Vec<ProcSample>) {
     let mut by_cpu = rows.clone();
     by_cpu.sort_by(|a, b| {
-        b.cpu_pct.total_cmp(&a.cpu_pct).then_with(|| a.pid.cmp(&b.pid))
+        b.cpu_pct
+            .total_cmp(&a.cpu_pct)
+            .then_with(|| a.pid.cmp(&b.pid))
     });
     by_cpu.truncate(n);
 
@@ -182,20 +193,36 @@ mod tests {
     #[test]
     fn app_name_rejects_non_bundle_paths() {
         assert_eq!(app_name("/usr/bin/ssh"), None);
-        assert_eq!(app_name("/Applications/Xcode.app/Contents/Developer/usr/bin/clang"), None);
+        assert_eq!(
+            app_name("/Applications/Xcode.app/Contents/Developer/usr/bin/clang"),
+            None
+        );
         assert_eq!(app_name(""), None);
     }
 
     fn raw(pid: u32, parent: Option<u32>, exe: &str) -> RawProc {
-        RawProc { pid, parent, name: format!("p{pid}"), exe: Some(exe.into()),
-                  cpu_pct: 0.0, mem_bytes: 0 }
+        RawProc {
+            pid,
+            parent,
+            name: format!("p{pid}"),
+            exe: Some(exe.into()),
+            cpu_pct: 0.0,
+            mem_bytes: 0,
+        }
     }
 
     #[test]
     fn resolve_app_walks_up_to_the_owning_bundle() {
         let mut by_pid = HashMap::new();
         by_pid.insert(1, raw(1, None, "/sbin/launchd"));
-        by_pid.insert(10, raw(10, Some(1), "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"));
+        by_pid.insert(
+            10,
+            raw(
+                10,
+                Some(1),
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            ),
+        );
         by_pid.insert(20, raw(20, Some(10), "/usr/lib/helper"));
         assert_eq!(resolve_app(20, &by_pid), Some("Google Chrome".to_string()));
         assert_eq!(resolve_app(1, &by_pid), None);
@@ -210,12 +237,23 @@ mod tests {
     }
 
     fn sample(pid: u32, cpu: f32, mem_mb: u64) -> ProcSample {
-        ProcSample { pid, name: format!("p{pid}"), app: None, cpu_pct: cpu, mem_mb, threads: 1 }
+        ProcSample {
+            pid,
+            name: format!("p{pid}"),
+            app: None,
+            cpu_pct: cpu,
+            mem_mb,
+            threads: 1,
+        }
     }
 
     #[test]
     fn rank_returns_top_n_by_each_dimension() {
-        let rows = vec![sample(1, 10.0, 500), sample(2, 300.0, 10), sample(3, 5.0, 4000)];
+        let rows = vec![
+            sample(1, 10.0, 500),
+            sample(2, 300.0, 10),
+            sample(3, 5.0, 4000),
+        ];
         let (by_cpu, by_mem) = rank(rows, 2);
         assert_eq!(by_cpu.iter().map(|p| p.pid).collect::<Vec<_>>(), vec![2, 1]);
         assert_eq!(by_mem.iter().map(|p| p.pid).collect::<Vec<_>>(), vec![3, 1]);
@@ -225,14 +263,20 @@ mod tests {
     fn rank_breaks_ties_by_pid_for_determinism() {
         let rows = vec![sample(9, 1.0, 1), sample(2, 1.0, 1), sample(5, 1.0, 1)];
         let (by_cpu, _) = rank(rows, 3);
-        assert_eq!(by_cpu.iter().map(|p| p.pid).collect::<Vec<_>>(), vec![2, 5, 9]);
+        assert_eq!(
+            by_cpu.iter().map(|p| p.pid).collect::<Vec<_>>(),
+            vec![2, 5, 9]
+        );
     }
 
     #[test]
     fn collect_sees_this_test_process() {
         let me = std::process::id();
         let rows = collect();
-        let mine = rows.iter().find(|p| p.pid == me).expect("own process missing from table");
+        let mine = rows
+            .iter()
+            .find(|p| p.pid == me)
+            .expect("own process missing from table");
         assert!(mine.threads >= 1, "thread count should come from libproc");
         assert!(mine.mem_mb >= 1);
     }

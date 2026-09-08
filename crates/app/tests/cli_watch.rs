@@ -10,7 +10,12 @@ fn watch_emits_one_json_object_per_line_and_stops_at_count() {
 
     let text = String::from_utf8(out.stdout).unwrap();
     let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
-    assert_eq!(lines.len(), 3, "expected 3 NDJSON lines, got {}", lines.len());
+    assert_eq!(
+        lines.len(),
+        3,
+        "expected 3 NDJSON lines, got {}",
+        lines.len()
+    );
 
     for line in lines {
         let v: serde_json::Value = serde_json::from_str(line)

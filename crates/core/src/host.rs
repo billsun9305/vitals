@@ -30,7 +30,9 @@ pub fn uptime_s() -> u64 {
 
 /// Logical CPU count — the denominator for load-average saturation.
 pub fn ncpu() -> usize {
-    std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
 }
 
 #[cfg(test)]

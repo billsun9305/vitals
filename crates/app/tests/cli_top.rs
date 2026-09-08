@@ -1,8 +1,15 @@
 use std::process::Command;
 
 fn run(args: &[&str]) -> serde_json::Value {
-    let out = Command::new(env!("CARGO_BIN_EXE_vitals")).args(args).output().unwrap();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(env!("CARGO_BIN_EXE_vitals"))
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     serde_json::from_slice(&out.stdout).unwrap()
 }
 
@@ -27,9 +34,16 @@ fn top_returns_both_dimensions_in_one_call() {
 #[test]
 fn top_is_sorted_descending() {
     let v = run(&["top", "-n", "5"]);
-    let mem: Vec<u64> = v["by_mem"].as_array().unwrap()
-        .iter().map(|r| r["mem_mb"].as_u64().unwrap()).collect();
-    assert!(mem.windows(2).all(|w| w[0] >= w[1]), "not descending: {mem:?}");
+    let mem: Vec<u64> = v["by_mem"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["mem_mb"].as_u64().unwrap())
+        .collect();
+    assert!(
+        mem.windows(2).all(|w| w[0] >= w[1]),
+        "not descending: {mem:?}"
+    );
 }
 
 #[test]

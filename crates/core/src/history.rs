@@ -84,7 +84,13 @@ mod tests {
     }
 
     fn obs(unix_s: u64, swap: u64) -> Observation {
-        Observation { schema_version: 1, unix_s, mem_used_mb: 1000, mem_total_mb: 36864, swap_used_mb: swap }
+        Observation {
+            schema_version: 1,
+            unix_s,
+            mem_used_mb: 1000,
+            mem_total_mb: 36864,
+            swap_used_mb: swap,
+        }
     }
 
     #[test]

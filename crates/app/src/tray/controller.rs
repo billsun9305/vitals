@@ -441,7 +441,11 @@ impl Controller {
         if *self.ivars().last_title.borrow() == title {
             return; // budget rule: only touch AppKit when the string changed
         }
-        if let Some(button) = self.ivars().status_item.button(MainThreadMarker::from(self)) {
+        if let Some(button) = self
+            .ivars()
+            .status_item
+            .button(MainThreadMarker::from(self))
+        {
             button.setTitle(&NSString::from_str(title));
         }
         *self.ivars().last_title.borrow_mut() = title.to_string();

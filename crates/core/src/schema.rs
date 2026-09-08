@@ -23,18 +23,36 @@ pub fn now_rfc3339() -> String {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum PressureLevel { Normal, Warning, Critical, Unknown }
+pub enum PressureLevel {
+    Normal,
+    Warning,
+    Critical,
+    Unknown,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum ThermalState { Nominal, Fair, Serious, Critical, Unknown }
+pub enum ThermalState {
+    Nominal,
+    Fair,
+    Serious,
+    Critical,
+    Unknown,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum Severity { Nominal, Warning, Critical }
+pub enum Severity {
+    Nominal,
+    Warning,
+    Critical,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub enum CoreKind { E, P }
+pub enum CoreKind {
+    E,
+    P,
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Host {
@@ -153,10 +171,18 @@ pub struct Verdict {
     pub summary: String,
 }
 
-fn r1(v: f32) -> f32 { (v * 10.0).round() / 10.0 }
-fn r2(v: f32) -> f32 { (v * 100.0).round() / 100.0 }
-fn pct(ratio: f32) -> f32 { r1(ratio * 100.0) }
-fn mb(bytes: u64) -> u64 { bytes / (1024 * 1024) }
+fn r1(v: f32) -> f32 {
+    (v * 10.0).round() / 10.0
+}
+fn r2(v: f32) -> f32 {
+    (v * 100.0).round() / 100.0
+}
+fn pct(ratio: f32) -> f32 {
+    r1(ratio * 100.0)
+}
+fn mb(bytes: u64) -> u64 {
+    bytes / (1024 * 1024)
+}
 
 /// Everything `build_snapshot` needs that is not already in `Metrics`.
 pub struct SnapshotInputs<'a> {
@@ -217,11 +243,15 @@ pub fn build_snapshot(i: SnapshotInputs<'_>) -> Snapshot {
         power_sys_w: r2(m.sys_power),
         temp_cpu_c: r1(m.temp.cpu_temp_avg),
         temp_gpu_c: r1(m.temp.gpu_temp_avg),
-        fans: m.fans.iter().map(|f| Fan {
-            name: f.name.clone(),
-            rpm: f.rpm,
-            max_rpm: f.max_rpm,
-        }).collect(),
+        fans: m
+            .fans
+            .iter()
+            .map(|f| Fan {
+                name: f.name.clone(),
+                rpm: f.rpm,
+                max_rpm: f.max_rpm,
+            })
+            .collect(),
         load_avg: i.load_avg,
         uptime_s: i.uptime_s,
         thermal_state: i.thermal_state,
@@ -236,8 +266,12 @@ mod tests {
         SnapshotInputs {
             metrics: m,
             host: Host {
-                chip: "Apple M3 Pro".into(), model: "Mac15,6".into(),
-                ecpu_cores: 6, pcpu_cores: 6, gpu_cores: 18, ncpu: 12,
+                chip: "Apple M3 Pro".into(),
+                model: "Mac15,6".into(),
+                ecpu_cores: 6,
+                pcpu_cores: 6,
+                gpu_cores: 18,
+                ncpu: 12,
             },
             sample_ms: 200,
             sampled_at: "2026-09-07T22:04:05Z".into(),
@@ -292,12 +326,28 @@ mod tests {
     fn cores_are_e_then_p_with_a_dense_id() {
         let m = macmon::Metrics {
             ecpu_cores: vec![
-            macmon::CpuCoreMetrics { die_id: 0, core_id: 0, freq_mhz: 1104, active_ratio: 0.062, scaled_ratio: 0.02 },
-            macmon::CpuCoreMetrics { die_id: 0, core_id: 1, freq_mhz: 1200, active_ratio: 0.10,  scaled_ratio: 0.04 },
-        ],
-            pcpu_cores: vec![
-            macmon::CpuCoreMetrics { die_id: 0, core_id: 0, freq_mhz: 3204, active_ratio: 0.50, scaled_ratio: 0.40 },
-        ],
+                macmon::CpuCoreMetrics {
+                    die_id: 0,
+                    core_id: 0,
+                    freq_mhz: 1104,
+                    active_ratio: 0.062,
+                    scaled_ratio: 0.02,
+                },
+                macmon::CpuCoreMetrics {
+                    die_id: 0,
+                    core_id: 1,
+                    freq_mhz: 1200,
+                    active_ratio: 0.10,
+                    scaled_ratio: 0.04,
+                },
+            ],
+            pcpu_cores: vec![macmon::CpuCoreMetrics {
+                die_id: 0,
+                core_id: 0,
+                freq_mhz: 3204,
+                active_ratio: 0.50,
+                scaled_ratio: 0.40,
+            }],
             ..Default::default()
         };
         let s = build_snapshot(inputs_for(&m));
@@ -307,16 +357,27 @@ mod tests {
         assert_eq!(kinds, vec![CoreKind::E, CoreKind::E, CoreKind::P]);
         assert_eq!(s.cores[0].pct, 6.2);
         assert_eq!(s.cores[2].freq_mhz, 3204);
-        assert_eq!(s.cores[2].core_id, 0, "core_id is per-cluster and is passed through unchanged");
+        assert_eq!(
+            s.cores[2].core_id, 0,
+            "core_id is per-cluster and is passed through unchanged"
+        );
     }
 
     #[test]
     fn fans_pass_through_and_omit_absent_max_rpm() {
         let m = macmon::Metrics {
             fans: vec![
-            macmon::FanMetric { name: "fan0".into(), rpm: 1820, max_rpm: Some(4400) },
-            macmon::FanMetric { name: "fan1".into(), rpm: 1790, max_rpm: None },
-        ],
+                macmon::FanMetric {
+                    name: "fan0".into(),
+                    rpm: 1820,
+                    max_rpm: Some(4400),
+                },
+                macmon::FanMetric {
+                    name: "fan1".into(),
+                    rpm: 1790,
+                    max_rpm: None,
+                },
+            ],
             ..Default::default()
         };
         let s = build_snapshot(inputs_for(&m));
@@ -340,9 +401,18 @@ mod tests {
 
     #[test]
     fn enums_serialize_lowercase() {
-        assert_eq!(serde_json::to_string(&PressureLevel::Warning).unwrap(), "\"warning\"");
-        assert_eq!(serde_json::to_string(&ThermalState::Serious).unwrap(), "\"serious\"");
-        assert_eq!(serde_json::to_string(&Severity::Critical).unwrap(), "\"critical\"");
+        assert_eq!(
+            serde_json::to_string(&PressureLevel::Warning).unwrap(),
+            "\"warning\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ThermalState::Serious).unwrap(),
+            "\"serious\""
+        );
+        assert_eq!(
+            serde_json::to_string(&Severity::Critical).unwrap(),
+            "\"critical\""
+        );
         assert_eq!(serde_json::to_string(&CoreKind::E).unwrap(), "\"E\"");
     }
 
@@ -354,11 +424,22 @@ mod tests {
 
     #[test]
     fn optional_fields_are_omitted_never_null() {
-        let fan = Fan { name: "fan0".into(), rpm: 1820, max_rpm: None };
+        let fan = Fan {
+            name: "fan0".into(),
+            rpm: 1820,
+            max_rpm: None,
+        };
         let json = serde_json::to_string(&fan).unwrap();
         assert_eq!(json, r#"{"name":"fan0","rpm":1820}"#);
 
-        let row = ProcRow { pid: 1, name: "launchd".into(), app: None, cpu_pct: 0.1, mem_mb: 12, threads: 4 };
+        let row = ProcRow {
+            pid: 1,
+            name: "launchd".into(),
+            app: None,
+            cpu_pct: 0.1,
+            mem_mb: 12,
+            threads: 4,
+        };
         assert!(!serde_json::to_string(&row).unwrap().contains("app"));
     }
 

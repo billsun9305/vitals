@@ -31,7 +31,11 @@ pub struct PressureInputs {
 }
 
 fn reason(code: &str, severity: Severity, detail: String) -> Reason {
-    Reason { code: code.to_string(), severity, detail }
+    Reason {
+        code: code.to_string(),
+        severity,
+        detail,
+    }
 }
 
 /// "a", "a and b", "a, b and c".
@@ -107,7 +111,11 @@ pub fn evaluate(i: PressureInputs) -> Verdict {
         _ => {}
     }
 
-    let load_ratio = if i.ncpu > 0 { i.load1 / i.ncpu as f64 } else { 0.0 };
+    let load_ratio = if i.ncpu > 0 {
+        i.load1 / i.ncpu as f64
+    } else {
+        0.0
+    };
     if load_ratio >= LOAD_SATURATED_HARD {
         reasons.push(reason(
             "cpu_saturated_hard",
@@ -159,7 +167,9 @@ pub fn evaluate(i: PressureInputs) -> Verdict {
         }
     }
 
-    let summary = summarize(&reasons, &suspects, swapping, load_ratio, mem_fired, cpu_fired);
+    let summary = summarize(
+        &reasons, &suspects, swapping, load_ratio, mem_fired, cpu_fired,
+    );
 
     Verdict {
         schema_version: SCHEMA_VERSION,
@@ -227,7 +237,13 @@ mod tests {
     use crate::procs::ProcSample;
 
     fn obs(unix_s: u64, mem_used: u64, swap: u64) -> Observation {
-        Observation { schema_version: 1, unix_s, mem_used_mb: mem_used, mem_total_mb: 36864, swap_used_mb: swap }
+        Observation {
+            schema_version: 1,
+            unix_s,
+            mem_used_mb: mem_used,
+            mem_total_mb: 36864,
+            swap_used_mb: swap,
+        }
     }
 
     fn base() -> PressureInputs {
@@ -245,8 +261,14 @@ mod tests {
     }
 
     fn proc(pid: u32, name: &str, app: Option<&str>, cpu: f32, mem: u64) -> ProcSample {
-        ProcSample { pid, name: name.into(), app: app.map(String::from),
-                     cpu_pct: cpu, mem_mb: mem, threads: 8 }
+        ProcSample {
+            pid,
+            name: name.into(),
+            app: app.map(String::from),
+            cpu_pct: cpu,
+            mem_mb: mem,
+            threads: 8,
+        }
     }
 
     fn codes(v: &Verdict) -> Vec<String> {
@@ -281,7 +303,10 @@ mod tests {
     fn swap_growth_fires_at_the_documented_threshold() {
         let mut i = base();
         i.now = obs(1_000_060, 10_000, 100 + 255);
-        assert!(evaluate(i).reasons.is_empty(), "255 MB is below the 256 MB threshold");
+        assert!(
+            evaluate(i).reasons.is_empty(),
+            "255 MB is below the 256 MB threshold"
+        );
 
         let mut i = base();
         i.now = obs(1_000_063, 10_000, 100 + 412);
@@ -357,21 +382,32 @@ mod tests {
 
         let mut i = base();
         i.thermal = ThermalState::Fair;
-        assert!(evaluate(i).reasons.is_empty(), "fair is not worth reporting");
+        assert!(
+            evaluate(i).reasons.is_empty(),
+            "fair is not worth reporting"
+        );
     }
 
     #[test]
     fn memory_reasons_blame_the_largest_process_and_cpu_reasons_the_busiest() {
         let mut i = base();
         i.mem_pressure = PressureLevel::Warning;
-        i.top_mem = Some(proc(4412, "Google Chrome Helper (Renderer)", Some("Google Chrome"), 12.0, 4820));
+        i.top_mem = Some(proc(
+            4412,
+            "Google Chrome Helper (Renderer)",
+            Some("Google Chrome"),
+            12.0,
+            4820,
+        ));
         i.top_cpu = Some(proc(77, "cc1plus", None, 380.0, 900));
         let v = evaluate(i);
         assert_eq!(v.suspects.len(), 1);
         assert_eq!(v.suspects[0].pid, 4412);
         assert_eq!(v.suspects[0].why, "largest resident set (4820 MB)");
-        assert_eq!(v.summary,
-                   "Memory is under pressure. Google Chrome is the likely cause.");
+        assert_eq!(
+            v.summary,
+            "Memory is under pressure. Google Chrome is the likely cause."
+        );
     }
 
     #[test]
@@ -396,6 +432,9 @@ mod tests {
     fn join_with_and_reads_like_english() {
         assert_eq!(join_with_and(&["a".into()]), "a");
         assert_eq!(join_with_and(&["a".into(), "b".into()]), "a and b");
-        assert_eq!(join_with_and(&["a".into(), "b".into(), "c".into()]), "a, b and c");
+        assert_eq!(
+            join_with_and(&["a".into(), "b".into(), "c".into()]),
+            "a, b and c"
+        );
     }
 }

@@ -25,7 +25,10 @@ pub fn format_title(s: &Snapshot) -> String {
 /// The four informational rows of the dropdown, in order.
 pub fn menu_lines(s: &Snapshot) -> [String; 4] {
     [
-        format!("CPU  {:.1}%   E {:.1}%   P {:.1}%", s.cpu_pct, s.ecpu_pct, s.pcpu_pct),
+        format!(
+            "CPU  {:.1}%   E {:.1}%   P {:.1}%",
+            s.cpu_pct, s.ecpu_pct, s.pcpu_pct
+        ),
         format!("GPU  {:.1}%   {} MHz", s.gpu_pct, s.gpu_freq_mhz),
         format!(
             "MEM  {} / {} MB   swap {} MB",

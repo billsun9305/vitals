@@ -46,8 +46,11 @@ mod tests {
     #[test]
     fn kernel_reports_a_known_pressure_level() {
         let level = mem_pressure_level();
-        assert_ne!(level, PressureLevel::Unknown,
-                   "kern.memorystatus_vm_pressure_level should be readable outside a sandbox");
+        assert_ne!(
+            level,
+            PressureLevel::Unknown,
+            "kern.memorystatus_vm_pressure_level should be readable outside a sandbox"
+        );
     }
 
     #[test]

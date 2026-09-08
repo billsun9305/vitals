@@ -132,16 +132,57 @@ mod tests {
 
     #[test]
     fn interval_follows_the_documented_table() {
-        assert_eq!(interval_for(TrayState { menu_open: true,  on_battery: false, low_power: false, display_asleep: false }), 1_000);
-        assert_eq!(interval_for(TrayState { menu_open: false, on_battery: false, low_power: false, display_asleep: false }), 5_000);
-        assert_eq!(interval_for(TrayState { menu_open: false, on_battery: true,  low_power: false, display_asleep: false }), 15_000);
-        assert_eq!(interval_for(TrayState { menu_open: false, on_battery: true,  low_power: true,  display_asleep: false }), 30_000);
+        assert_eq!(
+            interval_for(TrayState {
+                menu_open: true,
+                on_battery: false,
+                low_power: false,
+                display_asleep: false
+            }),
+            1_000
+        );
+        assert_eq!(
+            interval_for(TrayState {
+                menu_open: false,
+                on_battery: false,
+                low_power: false,
+                display_asleep: false
+            }),
+            5_000
+        );
+        assert_eq!(
+            interval_for(TrayState {
+                menu_open: false,
+                on_battery: true,
+                low_power: false,
+                display_asleep: false
+            }),
+            15_000
+        );
+        assert_eq!(
+            interval_for(TrayState {
+                menu_open: false,
+                on_battery: true,
+                low_power: true,
+                display_asleep: false
+            }),
+            30_000
+        );
     }
 
     #[test]
     fn an_open_menu_wins_over_every_power_saving_state() {
-        let s = TrayState { menu_open: true, on_battery: true, low_power: true, display_asleep: false };
-        assert_eq!(interval_for(s), 1_000, "the user is looking at it; sample fast");
+        let s = TrayState {
+            menu_open: true,
+            on_battery: true,
+            low_power: true,
+            display_asleep: false,
+        };
+        assert_eq!(
+            interval_for(s),
+            1_000,
+            "the user is looking at it; sample fast"
+        );
     }
 
     #[test]
@@ -157,9 +198,22 @@ mod tests {
     #[test]
     fn setting_the_state_updates_the_interval() {
         let c = Cadence::new(5_000);
-        c.set_state(TrayState { menu_open: true, on_battery: false, low_power: false, display_asleep: false });
+        c.set_state(TrayState {
+            menu_open: true,
+            on_battery: false,
+            low_power: false,
+            display_asleep: false,
+        });
         assert_eq!(c.interval_ms(), 1_000);
-        c.set_state(TrayState { menu_open: false, on_battery: false, low_power: false, display_asleep: true });
-        assert!(c.is_parked(), "a sleeping display parks the worker instead of slowing it");
+        c.set_state(TrayState {
+            menu_open: false,
+            on_battery: false,
+            low_power: false,
+            display_asleep: true,
+        });
+        assert!(
+            c.is_parked(),
+            "a sleeping display parks the worker instead of slowing it"
+        );
     }
 }
