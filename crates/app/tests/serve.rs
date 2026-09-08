@@ -13,15 +13,34 @@ fn start(port: u16) -> Server {
         .stdout(Stdio::null())
         .spawn()
         .expect("failed to start vitals serve");
-    // Give the listener time to bind and the first sample to land.
-    //
-    // Measured on an M1 Pro debug build: process startup plus
-    // `SamplerSession::new()` (~0.5s) plus the first `get_metrics` call
-    // (~0.2s at the server's 200ms cadence) plus up to one 250ms cache-poll
-    // tick already totals close to 1s before any HTTP overhead, so a 1.5s
-    // budget flakes under load. 3s leaves comfortable headroom.
-    std::thread::sleep(std::time::Duration::from_millis(3_000));
-    Server(child)
+    let server = Server(child);
+    wait_until_ready(port);
+    server
+}
+
+/// Block until the server answers `/api/snapshot` with a 200, or give up.
+///
+/// A fixed sleep cannot be right here. Startup is process spawn, plus
+/// `SamplerSession::new()` (~0.5s), plus one full measurement window — and
+/// that window is `interval.min(SAMPLE_WINDOW_MS)`, so it tracks the
+/// server's cadence rather than being a constant. Measured on a debug build
+/// at the 1s cadence, the first 200 lands around 2.15s; a 3s sleep leaves
+/// under a second of margin, which is the kind of number that passes on an
+/// idle laptop and flakes on a loaded CI box. Polling removes the guess
+/// entirely: the fast case stops as soon as the sample is there, and the
+/// ceiling is generous because it is only ever paid by a real failure.
+fn wait_until_ready(port: u16) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        if get(port, "/api/snapshot").0 == 200 {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "server on port {port} never served /api/snapshot within 20s"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
 }
 
 fn get(port: u16, path: &str) -> (u16, String) {
