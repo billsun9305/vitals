@@ -30,6 +30,20 @@ pub enum Command {
         #[arg(long)]
         human: bool,
     },
+    /// Processes using the most CPU and the most memory, in one response.
+    ///
+    /// cpu_pct is per-process and exceeds 100 on multi-core work, like `ps`.
+    Top {
+        /// How many rows per dimension.
+        #[arg(short = 'n', long = "count", default_value_t = 5)]
+        n: usize,
+        /// Accepted for compatibility; JSON is already the default.
+        #[arg(long)]
+        json: bool,
+        /// Print an aligned table instead of JSON.
+        #[arg(long)]
+        human: bool,
+    },
 }
 
 /// Collect a snapshot with every field populated.
@@ -57,6 +71,37 @@ pub fn run_snapshot(interval_ms: u32, human: bool) -> Result<(), String> {
         );
     } else {
         println!("{}", serde_json::to_string_pretty(&snap).map_err(|e| e.to_string())?);
+    }
+    Ok(())
+}
+
+use vitals_core::procs::{collect, rank, to_rows};
+use vitals_core::schema::TopReport;
+
+pub fn collect_top(n: usize) -> Result<TopReport, String> {
+    let rows = collect();
+    if rows.is_empty() {
+        return Err("process enumeration returned nothing".to_string());
+    }
+    let (by_cpu, by_mem) = rank(rows, n);
+    Ok(TopReport {
+        schema_version: vitals_core::schema::SCHEMA_VERSION,
+        sampled_at: now_rfc3339(),
+        sample_ms: 200, // sysinfo::MINIMUM_CPU_UPDATE_INTERVAL
+        by_cpu: to_rows(&by_cpu),
+        by_mem: to_rows(&by_mem),
+    })
+}
+
+pub fn run_top(n: usize, human: bool) -> Result<(), String> {
+    let report = collect_top(n)?;
+    if human {
+        println!("{:>7}  {:>7}  {:>8}  {}", "PID", "CPU%", "MEM MB", "NAME");
+        for r in report.by_cpu.iter().chain(report.by_mem.iter()) {
+            println!("{:>7}  {:>7.1}  {:>8}  {}", r.pid, r.cpu_pct, r.mem_mb, r.name);
+        }
+    } else {
+        println!("{}", serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?);
     }
     Ok(())
 }

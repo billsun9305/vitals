@@ -587,7 +587,6 @@ name = "vitals"
 version = "0.1.0"
 dependencies = [
  "clap",
- "macmon",
  "serde_json",
  "vitals-core",
 ]

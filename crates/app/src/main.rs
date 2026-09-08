@@ -7,6 +7,7 @@ fn main() {
     let args = Cli::parse();
     let result = match args.command {
         Some(Command::Snapshot { interval, json: _, human }) => cli::run_snapshot(interval, human),
+        Some(Command::Top { n, json: _, human }) => cli::run_top(n, human),
         None => {
             eprintln!("vitals: the menu bar app is not built yet; try `vitals snapshot`");
             std::process::exit(1);
