@@ -6,6 +6,18 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Condvar, Mutex};
+use std::time::{Duration, Instant};
+
+/// How long a single measurement actually takes.
+///
+/// The sampling window and the gap between samples are deliberately
+/// separate. `get_metrics` blocks for exactly the window it is given, so
+/// sampling for the full interval would mean a 30s call on low power — and
+/// an open menu could not take effect until it returned, defeating the rule
+/// that an open menu wins over every power-saving state. Measure over a
+/// short fixed window, then spend the remainder in an interruptible wait.
+/// A second of IOReport deltas is as stable as thirty.
+pub const SAMPLE_WINDOW_MS: u32 = 1_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TrayState {
@@ -56,6 +68,10 @@ impl Cadence {
 
     pub fn park(&self) {
         self.parked.store(true, Ordering::Relaxed);
+        // Notify under the lock so a worker idling between samples wakes and
+        // parks now, instead of finishing a wait of up to 30 seconds first.
+        let _guard = self.lock.lock().unwrap();
+        self.cv.notify_all();
     }
 
     pub fn unpark(&self) {
@@ -70,6 +86,34 @@ impl Cadence {
             self.park();
         } else {
             self.unpark();
+        }
+    }
+
+    /// Wait out the gap between samples, returning early if the worker is
+    /// parked or the cadence changes. Called only by the worker.
+    ///
+    /// `scheduled_for` is the interval in force when this gap was chosen; if
+    /// it changes underneath us the gap is stale, so return and let the
+    /// worker re-read it. This is what makes an open menu take effect within
+    /// one sample window rather than one full interval.
+    pub fn wait_between_samples(&self, ms: u32, scheduled_for: u32) {
+        if ms == 0 {
+            return;
+        }
+        let deadline = Instant::now() + Duration::from_millis(ms as u64);
+        let mut guard = self.lock.lock().unwrap();
+        loop {
+            if self.parked.load(Ordering::Relaxed)
+                || self.interval_ms.load(Ordering::Relaxed) != scheduled_for
+            {
+                return;
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                return;
+            }
+            let (g, _) = self.cv.wait_timeout(guard, deadline - now).unwrap();
+            guard = g;
         }
     }
 

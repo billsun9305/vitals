@@ -109,7 +109,13 @@ pub fn spawn_sampler(cadence: Arc<Cadence>) -> SamplerHandle {
                 // Park rather than spin: zero wakeups while the display sleeps.
                 worker_cadence.wait_while_parked();
                 let interval = worker_cadence.interval_ms();
-                match session.next(interval) {
+                // Measure over a short window, then wait out the rest of the
+                // interval interruptibly. get_metrics blocks for exactly the
+                // window it is given, so sampling for the full interval would
+                // pin the worker inside a 30s call on low power and make an
+                // open menu wait that long to take effect.
+                let window = interval.min(crate::cadence::SAMPLE_WINDOW_MS);
+                match session.next(window) {
                     Ok(sample) => {
                         if tx.send(Ok(sample)).is_err() {
                             return; // main thread went away
@@ -121,6 +127,7 @@ pub fn spawn_sampler(cadence: Arc<Cadence>) -> SamplerHandle {
                         }
                     }
                 }
+                worker_cadence.wait_between_samples(interval.saturating_sub(window), interval);
             }
         })
         .expect("failed to spawn vitals-sampler thread");
@@ -181,49 +188,80 @@ mod tests {
         assert!(short.as_millis() < 300, "50ms sample took {short:?}");
     }
 
-    #[test]
-    fn the_worker_delivers_samples_and_parks_on_demand() {
-        use crate::cadence::Cadence;
-        use std::sync::Arc;
-
-        let cadence = Arc::new(Cadence::new(100));
-        let handle = super::spawn_sampler(Arc::clone(&cadence));
-
-        let mut got = None;
-        for _ in 0..50 {
-            if let Some(v) = handle.try_recv() {
-                got = Some(v.expect("worker reported an error"));
-                break;
+    /// Helper: poll for a sample, returning how long it took to arrive.
+    #[cfg(test)]
+    fn wait_for_sample(h: &SamplerHandle, budget: std::time::Duration) -> Option<std::time::Duration> {
+        let t = std::time::Instant::now();
+        while t.elapsed() < budget {
+            if h.try_recv().is_some() {
+                return Some(t.elapsed());
             }
-            std::thread::sleep(std::time::Duration::from_millis(50));
+            std::thread::sleep(std::time::Duration::from_millis(25));
         }
-        assert!(got.is_some(), "no sample arrived within 2.5s");
+        None
+    }
 
-        // Parking must actually stop the worker — not merely flip a flag.
-        // The flag round-trip alone is already covered by
-        // cadence::tests::parking_and_unparking_round_trips; asserting it
-        // here again would leave the default suite with no coverage of the
-        // behaviour that matters, and none at all of the unpark/notify path
-        // where every lost-wakeup risk lives.
-        cadence.park();
-        std::thread::sleep(std::time::Duration::from_millis(400));
-        while handle.try_recv().is_some() {} // drain the in-flight sample
-        std::thread::sleep(std::time::Duration::from_millis(400));
+    /// One worker exercises every cadence property in sequence.
+    ///
+    /// Deliberately a single test rather than several: each spawned worker
+    /// builds its own `macmon::Sampler`, and two of them sampling IOReport
+    /// concurrently under a loaded test run is flaky. One worker, staged
+    /// assertions.
+    #[test]
+    fn the_worker_delivers_samples_responds_to_cadence_and_parks() {
+        use crate::cadence::TrayState;
+        use std::time::Duration;
+
+        // A slow cadence: one short measurement window, then a ~9s gap.
+        let cadence = Arc::new(Cadence::new(10_000));
+        let handle = super::spawn_sampler(Arc::clone(&cadence));
         assert!(
-            handle.try_recv().is_none(),
-            "worker kept sampling after park at a 100ms cadence"
+            wait_for_sample(&handle, Duration::from_secs(6)).is_some(),
+            "no sample ever crossed the channel"
         );
 
-        // ...and unparking must wake it again.
+        // 1. Speeding up the cadence must not wait out the old interval.
+        cadence.set_state(TrayState {
+            menu_open: true,
+            on_battery: true,
+            low_power: true,
+            display_asleep: false,
+        });
+        let took = wait_for_sample(&handle, Duration::from_secs(8))
+            .expect("no sample after the cadence was sped up");
+        assert!(
+            took < Duration::from_secs(4),
+            "cadence change took {took:?}; the worker waited out the old interval"
+        );
+
+        // 2. Parking must actually stop the worker, not merely flip a flag.
+        // The flag round-trip alone is covered by cadence's own tests;
+        // asserting only that here would leave the suite with no coverage of
+        // the behaviour that matters.
+        // park() cannot abort a measurement already inside its window — it
+        // only stops the next one — so wait out a full window before
+        // draining, or the in-flight sample lands after the drain and looks
+        // like the worker ignored the park.
+        cadence.park();
+        std::thread::sleep(Duration::from_millis(
+            (crate::cadence::SAMPLE_WINDOW_MS + 800) as u64,
+        ));
+        while handle.try_recv().is_some() {} // drain whatever was in flight
+        std::thread::sleep(Duration::from_millis(
+            (crate::cadence::SAMPLE_WINDOW_MS + 800) as u64,
+        ));
+        assert!(
+            handle.try_recv().is_none(),
+            "worker kept sampling after park"
+        );
+
+        // 3. ...and unparking must wake it again. This is the only coverage
+        // in the suite of the notify path where a lost wakeup would live.
         cadence.unpark();
-        let mut woke = false;
-        for _ in 0..20 {
-            if handle.try_recv().is_some() {
-                woke = true;
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        }
-        assert!(woke, "worker never resumed after unpark — lost wakeup");
+        assert!(
+            wait_for_sample(&handle, Duration::from_secs(6)).is_some(),
+            "worker never resumed after unpark — lost wakeup"
+        );
+        cadence.park();
     }
 }
