@@ -5,6 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[lib]
+name = "vitals"
+path = "src/lib.rs"
+
 [[bin]]
 name = "vitals"
 path = "src/main.rs"
@@ -13,6 +17,7 @@ path = "src/main.rs"
 vitals-core.workspace = true
 serde_json.workspace = true
 clap.workspace = true
+tiny_http.workspace = true
 objc2.workspace = true
 objc2-foundation.workspace = true
 objc2-app-kit = { workspace = true, features = [
