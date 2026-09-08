@@ -345,7 +345,15 @@ mod tests {
     fn thermal_states_map_to_reasons() {
         let mut i = base();
         i.thermal = ThermalState::Serious;
-        assert_eq!(codes(&evaluate(i)), vec!["thermal_serious"]);
+        let v = evaluate(i);
+        assert_eq!(codes(&v), vec!["thermal_serious"]);
+        assert_eq!(v.state, Severity::Warning);
+
+        let mut i = base();
+        i.thermal = ThermalState::Critical;
+        let v = evaluate(i);
+        assert_eq!(codes(&v), vec!["thermal_critical"]);
+        assert_eq!(v.state, Severity::Critical);
 
         let mut i = base();
         i.thermal = ThermalState::Fair;
