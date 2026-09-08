@@ -210,23 +210,25 @@ use vitals_core::sample::SamplerSession;
 /// Stream snapshots as NDJSON until `count` lines have been emitted (or
 /// forever, when `count` is 0). One `SamplerSession` is kept alive for the
 /// whole run, so `Sampler::new` is paid once rather than per line.
+/// `interval_s` of 0 is clamped to 1 second rather than rejected.
 ///
 /// The window passed to `next` is the *full* inter-line interval, unlike
 /// core's background worker, which measures over a short window and sleeps
-/// out the remainder. The difference is deliberate, not an oversight: the
-/// worker has to stay interruptible so an open menu can retune it mid-gap,
-/// whereas a CLI stream has nothing to stay responsive to. Back-to-back
-/// calls make the window and the period the same thing, so the simpler
-/// shape is also the correct one here.
+/// out the remainder. The difference is about interruptibility, not
+/// correctness: the worker must stay reachable so an open menu can retune
+/// it mid-gap, whereas a CLI stream has nothing to stay responsive to.
+/// Back-to-back calls make the window and the period the same thing, so
+/// the simpler shape is also the correct one here.
 ///
-/// `get_metrics` returns as soon as `window_ms` has passed *since the
-/// previous call*, counting time already spent blocked elsewhere toward
-/// that budget — measured at ~12ms when a 2s sleep preceded a 1s request,
-/// against ~1.01s back to back. Sleeping between short windows would
-/// therefore make each line arrive a window early: `-i 3` ticked every
-/// ~2.0s in testing. Requesting the whole interval sidesteps that.
+/// Worth knowing before changing either: `get_metrics` returns as soon as
+/// `window_ms` has passed *since the previous call*, counting time already
+/// spent blocked elsewhere toward that budget — ~12ms when a 2s sleep
+/// preceded a 1s request, against ~1.01s back to back. A worker that
+/// sleeps between short windows must therefore time its actual iteration;
+/// subtracting a window it never spent makes every period a window short.
+/// Core does time it, and its cadence is correct.
 pub fn run_watch(interval_s: u64, count: u64) -> Result<(), String> {
-    let interval_ms = (interval_s.max(1) * 1000).min(u32::MAX as u64) as u32;
+    let interval_ms = interval_s.max(1).saturating_mul(1000).min(u32::MAX as u64) as u32;
     let mut session = SamplerSession::new()?;
     let mut emitted = 0u64;
     let stdout = std::io::stdout();
@@ -249,9 +251,15 @@ pub fn run_watch(interval_s: u64, count: u64) -> Result<(), String> {
         // and break every line-oriented consumer tailing the stream.
         let line = serde_json::to_string(&snap).map_err(|e| e.to_string())?;
         let mut handle = stdout.lock();
-        // A closed pipe (e.g. `| head -1`) is a normal exit, not an error.
-        if writeln!(handle, "{line}").is_err() || handle.flush().is_err() {
-            return Ok(());
+        // A closed pipe (`| head -1`) is a normal exit. Anything else —
+        // a full disk when stdout is redirected to a file, say — is a real
+        // failure, and reporting it as success would leave a caller with
+        // silently truncated output and a zero exit status.
+        if let Err(e) = writeln!(handle, "{line}").and_then(|()| handle.flush()) {
+            return match e.kind() {
+                std::io::ErrorKind::BrokenPipe => Ok(()),
+                _ => Err(format!("writing to stdout: {e}")),
+            };
         }
         drop(handle);
 
