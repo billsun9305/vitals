@@ -8,6 +8,7 @@
 //! see `controller`'s note on `powerChanged:`.
 
 mod controller;
+mod panel;
 pub mod status_item;
 
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};

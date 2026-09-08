@@ -73,3 +73,39 @@ of CPU in ~40 seconds, about a third the per-second rate of the awake tray.
 
 **Go for Task 17.** Every budget row passes, so the custom drawn panel can
 proceed. If it regresses any row, this file is the baseline to diff against.
+
+## Task 17 re-measurement: the custom-drawn panel
+
+Same machine and method as above, release build, menu **closed** for the
+entire run (the panel view exists but is never mounted on screen, since it is
+only added to the window when the dropdown opens). `vitals` was launched and
+left alone; `ps -o time= -p <pid>` was read once shortly after launch and
+again after it had run for a further ~212s, so the delta excludes the
+few-hundred-millisecond startup burst (process creation, `Sampler::new`,
+`NSMenu`/`NSStatusItem`/`PanelView` construction) that a from-zero reading
+would otherwise fold into a strict-idle number.
+
+| Target | Before (Task 16) | After (Task 17) | |
+|---|---|---|---|
+| Idle CPU < 0.3% | 0.167% | **~0.19%** — 0.40s of CPU over 212s, menu closed | pass |
+| Memory < 25 MB | 15.9 MB physical footprint (peak 17.2) | **16.1 MB** physical footprint (peak 17.3) | pass |
+| Binary < 6 MB | 0.87 MB | **0.87 MB** (910,432 bytes) — unchanged | pass |
+| Threads 3–4 (baseline observed 5) | 5 | **5** | unchanged |
+
+The small CPU and footprint deltas are consistent with what a closed-menu run
+should cost: one extra `NSMenuItem`, one extra `NSView` subclass instance and
+its `RefCell<PanelState>` (an empty `Vec<f32>` and a `Ring<f32>` of capacity
+60, none of it populated while the menu is closed), and nothing on the poll
+path changed. `drawRect:` is never invoked and `PanelView::update` is never
+called while `menu_open` is false, so the panel adds a fixed, one-time
+allocation cost and no recurring one. Both readings land within the
+noise band of the Task 16 baseline: `ps`'s CPU-time field is quantized to
+centiseconds, so a ~0.02–0.03 percentage-point wobble at this magnitude is
+expected sampling noise rather than a real regression, and it is an order of
+magnitude below the 0.3% ceiling either way.
+
+Not re-measured: CPU/memory with the **menu open** (that requires driving
+real AppKit UI — clicking the status item — which this environment cannot
+do; see the Task 17 report for what could and could not be verified) and the
+parked-across-display-sleep number (unchanged code path; Task 17 touches
+nothing on it).
