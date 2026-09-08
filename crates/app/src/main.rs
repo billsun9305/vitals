@@ -8,6 +8,8 @@ fn main() {
     let result = match args.command {
         Some(Command::Snapshot { interval, json: _, human }) => cli::run_snapshot(interval, human),
         Some(Command::Top { n, json: _, human }) => cli::run_top(n, human),
+        Some(Command::Pressure { interval, json: _, human, exit_code }) =>
+            cli::run_pressure(interval, human, exit_code),
         None => {
             eprintln!("vitals: the menu bar app is not built yet; try `vitals snapshot`");
             std::process::exit(1);

@@ -44,6 +44,21 @@ pub enum Command {
         #[arg(long)]
         human: bool,
     },
+    /// A semantic health verdict: state, reasons, likely suspects, one sentence.
+    Pressure {
+        /// Sampling window in milliseconds.
+        #[arg(long, default_value_t = DEFAULT_INTERVAL_MS)]
+        interval: u32,
+        /// Accepted for compatibility; JSON is already the default.
+        #[arg(long)]
+        json: bool,
+        /// Print only the summary sentence.
+        #[arg(long)]
+        human: bool,
+        /// Exit 0 nominal, 3 warning, 4 critical. A real error is still 1.
+        #[arg(long)]
+        exit_code: bool,
+    },
 }
 
 /// Collect a snapshot with every field populated.
@@ -108,6 +123,73 @@ pub fn run_top(n: usize, human: bool) -> Result<(), String> {
         }
     } else {
         println!("{}", serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?);
+    }
+    Ok(())
+}
+
+use vitals_core::history::{self, Observation};
+use vitals_core::pressure::{evaluate, PressureInputs};
+use vitals_core::schema::{Severity, Verdict};
+
+pub fn exit_code_for(state: Severity) -> i32 {
+    match state {
+        Severity::Nominal => 0,
+        Severity::Warning => 3,
+        Severity::Critical => 4,
+    }
+}
+
+/// Collect a pressure verdict: one SoC sample and one process pass.
+///
+/// `macmon::Sampler` is `!Send` so it must stay on this thread; `sysinfo::
+/// System` is `Send`, so the process pass runs on a spawned thread instead.
+/// The two ~`interval_ms` windows then overlap rather than running back to
+/// back, which is one window of latency instead of two.
+pub fn collect_pressure(interval_ms: u32) -> Result<Verdict, String> {
+    let procs_thread = std::thread::spawn(collect);
+    let snap = collect_snapshot(interval_ms)?;
+    let rows = procs_thread.join().map_err(|_| "process collector panicked".to_string())?;
+    let (by_cpu, by_mem) = rank(rows, 1);
+
+    let now_s = history::unix_now_s();
+    let observation = Observation {
+        schema_version: vitals_core::schema::SCHEMA_VERSION,
+        unix_s: now_s,
+        mem_used_mb: snap.mem_used_mb,
+        mem_total_mb: snap.mem_total_mb,
+        swap_used_mb: snap.swap_used_mb,
+    };
+    let prev = history::load(now_s);
+
+    let verdict = evaluate(PressureInputs {
+        now: observation,
+        prev,
+        mem_pressure: snap.mem_pressure,
+        thermal: snap.thermal_state,
+        load1: snap.load_avg[0],
+        ncpu: snap.host.ncpu,
+        top_cpu: by_cpu.into_iter().next(),
+        top_mem: by_mem.into_iter().next(),
+        sampled_at: snap.sampled_at.clone(),
+    });
+
+    // Store after evaluating, so this run's numbers become the next
+    // baseline. History is best-effort by design: a write failure must not
+    // fail the command, since the verdict computed above is already valid.
+    let _ = history::store(&observation);
+
+    Ok(verdict)
+}
+
+pub fn run_pressure(interval_ms: u32, human: bool, use_exit_code: bool) -> Result<(), String> {
+    let verdict = collect_pressure(interval_ms)?;
+    if human {
+        println!("{}", verdict.summary);
+    } else {
+        println!("{}", serde_json::to_string_pretty(&verdict).map_err(|e| e.to_string())?);
+    }
+    if use_exit_code {
+        std::process::exit(exit_code_for(verdict.state));
     }
     Ok(())
 }
