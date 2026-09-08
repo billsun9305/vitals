@@ -59,6 +59,15 @@ pub enum Command {
         #[arg(long)]
         exit_code: bool,
     },
+    /// Stream snapshots as newline-delimited JSON until interrupted.
+    Watch {
+        /// Seconds between samples; also the sampling window.
+        #[arg(short = 'i', long = "interval", default_value_t = 2)]
+        interval_s: u64,
+        /// Stop after this many samples. 0 means run forever.
+        #[arg(short = 'n', long = "count", default_value_t = 0)]
+        count: u64,
+    },
 }
 
 /// Collect a snapshot with every field populated.
@@ -193,4 +202,62 @@ pub fn run_pressure(interval_ms: u32, human: bool, use_exit_code: bool) -> Resul
         std::process::exit(exit_code_for(verdict.state));
     }
     Ok(())
+}
+
+use std::io::Write;
+use vitals_core::sample::SamplerSession;
+
+/// Stream snapshots as NDJSON until `count` lines have been emitted (or
+/// forever, when `count` is 0). One `SamplerSession` is kept alive for the
+/// whole run, so `Sampler::new` is paid once rather than per line.
+///
+/// The window passed to `next` is the *full* inter-line interval, unlike
+/// core's background worker, which measures over a short window and sleeps
+/// out the remainder. The difference is deliberate, not an oversight: the
+/// worker has to stay interruptible so an open menu can retune it mid-gap,
+/// whereas a CLI stream has nothing to stay responsive to. Back-to-back
+/// calls make the window and the period the same thing, so the simpler
+/// shape is also the correct one here.
+///
+/// `get_metrics` returns as soon as `window_ms` has passed *since the
+/// previous call*, counting time already spent blocked elsewhere toward
+/// that budget — measured at ~12ms when a 2s sleep preceded a 1s request,
+/// against ~1.01s back to back. Sleeping between short windows would
+/// therefore make each line arrive a window early: `-i 3` ticked every
+/// ~2.0s in testing. Requesting the whole interval sidesteps that.
+pub fn run_watch(interval_s: u64, count: u64) -> Result<(), String> {
+    let interval_ms = (interval_s.max(1) * 1000).min(u32::MAX as u64) as u32;
+    let mut session = SamplerSession::new()?;
+    let mut emitted = 0u64;
+    let stdout = std::io::stdout();
+
+    loop {
+        let sample = session.next(interval_ms)?;
+        let snap = build_snapshot(SnapshotInputs {
+            metrics: &sample.metrics,
+            host: sample.host.clone(),
+            sample_ms: sample.sample_ms,
+            sampled_at: now_rfc3339(),
+            mem_pressure: mem_pressure_level(),
+            thermal_state: thermal_state(),
+            load_avg: load_avg(),
+            uptime_s: uptime_s(),
+        });
+
+        // Compact, not pretty: NDJSON is one complete object per line, and
+        // `to_string_pretty` would spread that object across several lines
+        // and break every line-oriented consumer tailing the stream.
+        let line = serde_json::to_string(&snap).map_err(|e| e.to_string())?;
+        let mut handle = stdout.lock();
+        // A closed pipe (e.g. `| head -1`) is a normal exit, not an error.
+        if writeln!(handle, "{line}").is_err() || handle.flush().is_err() {
+            return Ok(());
+        }
+        drop(handle);
+
+        emitted += 1;
+        if count != 0 && emitted >= count {
+            return Ok(());
+        }
+    }
 }
