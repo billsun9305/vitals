@@ -34,9 +34,10 @@ would run to eighty lines in a README.
 
 JSON is the default for `snapshot`, `top`,
 and `pressure`; each also accepts `--human` for a short text form meant
-for a terminal, not a parser. `--json` is accepted everywhere as a no-op
-(JSON is already the default), so scripts that pass it explicitly do not
-break.
+for a terminal, not a parser. `snapshot`, `top` and `pressure` also accept
+`--json` as a no-op, since JSON is already their default, so a script that
+passes it explicitly does not break. `watch` takes neither flag: it is
+always NDJSON, and `vitals watch --json` is an argument error (exit 2).
 
 ### `vitals snapshot` — one full SoC sample
 
@@ -200,8 +201,10 @@ Memory is under pressure and CPU load is 4.5x the core count. LM Studio is the l
 `pressure` exits `0` by default, deliberately — reporting a bad state is
 not the same as the command failing. Pass `--exit-code` to fold the
 verdict severity into the exit status instead: `0` nominal, `3` warning,
-`4` critical, and a real error (a bad flag, a sampler failure) is still
-`1` either way. Verified on this machine:
+`4` critical. A runtime failure — the sampler erroring, say — exits `1`
+either way. A malformed invocation never reaches that path: the argument
+parser rejects it first and exits `2`, so `1` and `2` distinguish "the
+tool broke" from "you called it wrong". Verified on this machine:
 
 ```
 $ vitals pressure --exit-code >/dev/null; echo $?

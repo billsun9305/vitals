@@ -30,10 +30,12 @@ Notes that prevent misreads:
 - `pressure` exits `0` by default even when `state` is `warning` or
   `critical` — it is reporting, not failing. Pass `--exit-code` to fold the
   verdict into the exit status instead (`0` nominal, `3` warning, `4`
-  critical); a real error (bad flag, sampler failure) is still `1` either
-  way, so a caller distinguishing "the machine is unwell" from "the
-  command broke" should always use `--exit-code`, never treat a plain
-  nonzero exit as ambiguous between the two.
+  critical). A runtime failure exits `1` either way, and a malformed
+  invocation exits `2` from the argument parser before the command runs —
+  so with `--exit-code` the status alone tells you which of the three
+  happened: the machine is unwell (3/4), the tool broke (1), or you called
+  it wrong (2). Without `--exit-code` a nonzero status can only mean the
+  latter two.
 - `watch` prints one compact (not pretty-printed) JSON object per line and
   flushes after every line, so a consumer piping it — `vitals watch | head
   -1`, a log tail, a streaming parser — sees each sample as soon as it is
