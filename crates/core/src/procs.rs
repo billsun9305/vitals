@@ -227,4 +227,20 @@ mod tests {
         assert!(mine.threads >= 1, "thread count should come from libproc");
         assert!(mine.mem_mb >= 1);
     }
+
+    #[test]
+    fn collect_measures_nonzero_cpu_somewhere() {
+        // `collect()` must refresh twice, `MINIMUM_CPU_UPDATE_INTERVAL` apart,
+        // because sysinfo derives CPU percent from the delta between two
+        // refreshes — a single refresh silently reports 0% for every
+        // process. Don't assert on this test process's own cpu_pct (an idle
+        // process legitimately reads 0.0, which would be flaky); instead
+        // assert across the whole table, since some process on a running Mac
+        // is always burning CPU.
+        let rows = collect();
+        assert!(
+            rows.iter().any(|p| p.cpu_pct > 0.0),
+            "expected at least one process with nonzero CPU; double-refresh may be broken"
+        );
+    }
 }

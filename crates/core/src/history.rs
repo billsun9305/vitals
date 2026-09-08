@@ -122,6 +122,16 @@ mod tests {
     }
 
     #[test]
+    fn mismatched_schema_version_is_rejected() {
+        let p = temp_path("schema-mismatch");
+        let mut bad = obs(1_000_000, 512);
+        bad.schema_version = 999;
+        store_to(&p, &bad).unwrap();
+        assert!(load_from(&p, 1_000_010).is_none());
+        std::fs::remove_file(&p).unwrap();
+    }
+
+    #[test]
     fn corrupt_files_are_ignored() {
         let p = temp_path("corrupt");
         std::fs::write(&p, b"{ not json").unwrap();

@@ -57,9 +57,14 @@ mod tests {
     #[test]
     fn host_from_soc_reads_the_real_machine() {
         let sampler = crate::macmon_sampler_for_test();
-        let host = host_from_soc(sampler.get_soc_info(), ncpu());
+        let soc = sampler.get_soc_info();
+        let host = host_from_soc(soc, ncpu());
         assert!(host.chip.contains("Apple"), "chip was {:?}", host.chip);
-        assert!(host.ecpu_cores + host.pcpu_cores >= 2);
+        assert_eq!(host.chip, soc.chip_name);
+        assert_eq!(host.model, soc.mac_model);
+        assert_eq!(host.ecpu_cores, soc.ecpu_cores);
+        assert_eq!(host.pcpu_cores, soc.pcpu_cores);
+        assert_eq!(host.gpu_cores, soc.gpu_cores);
         assert_eq!(host.ncpu, ncpu());
     }
 }
