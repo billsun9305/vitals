@@ -21,10 +21,34 @@ pub(crate) fn macmon_sampler_for_test() -> macmon::Sampler {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn every_declared_module_compiles() {
-        // The value of this test is that `cargo test` builds the full module
-        // tree; parallel tasks each fill in one stub and must not have to
-        // touch lib.rs.
-        assert!(cfg!(all(target_os = "macos", target_arch = "aarch64")));
+    fn every_declared_module_is_reachable() {
+        // The value of this test is linkage: `cargo test` builds the whole
+        // module tree, and each assertion below names one module, so a
+        // module dropped from lib.rs or emptied stops compiling here rather
+        // than failing somewhere confusing later. Each call is the cheapest
+        // pure thing that module exposes.
+        //
+        // (This replaced `assert!(cfg!(target_os = "macos"))`, which was a
+        // compile-time constant — always true wherever it could compile at
+        // all, since lib.rs already refuses to build off Apple Silicon.)
+        use super::*;
+        assert_eq!(schema::SCHEMA_VERSION, 1);
+        // Pinned, not just referenced: this is the window sysinfo measures
+        // per-process CPU over, and `top` reports it as sample_ms.
+        assert_eq!(procs::CPU_WINDOW_MS, 200);
+        assert_eq!(cadence::interval_for(cadence::TrayState {
+            menu_open: true,
+            on_battery: false,
+            low_power: false,
+            display_asleep: false,
+        }), 1_000);
+        assert_eq!(cadence::SAMPLE_WINDOW_MS, 1_000);
+        assert!(host::ncpu() >= 1);
+        assert!(history::unix_now_s() > 0);
+        assert_eq!(pressure::join_with_and(&["a".into()]), "a");
+        assert!(!format!("{:?}", sysctl::mem_pressure_level()).is_empty());
+        assert!(!format!("{:?}", thermal::thermal_state()).is_empty());
+        // ring is still a stub; Task 17 fills it in and should add a line here.
+        assert!(sample::sample_once(50).is_ok());
     }
 }

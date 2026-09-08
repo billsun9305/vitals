@@ -116,7 +116,8 @@ pub fn run_top(n: usize, human: bool) -> Result<(), String> {
         // there, which reads as a duplicate rather than as two answers.
         for (title, rows) in [("BY CPU", &report.by_cpu), ("BY MEM", &report.by_mem)] {
             println!("{title}");
-            println!("{:>7}  {:>7}  {:>8}  {}", "PID", "CPU%", "MEM MB", "NAME");
+            // Column widths here must match the row format on the next line.
+            println!("    PID     CPU%    MEM MB  NAME");
             for r in rows.iter() {
                 println!("{:>7}  {:>7.1}  {:>8}  {}", r.pid, r.cpu_pct, r.mem_mb, r.name);
             }

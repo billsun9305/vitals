@@ -276,10 +276,12 @@ mod tests {
 
     #[test]
     fn ratios_become_percentages_rounded_to_one_decimal() {
-        let mut m = macmon::Metrics::default();
-        m.cpu_active_ratio = 0.1239;
-        m.cpu_scaled_ratio = 0.0412;
-        m.gpu_active_ratio = 0.04;
+        let m = macmon::Metrics {
+            cpu_active_ratio: 0.1239,
+            cpu_scaled_ratio: 0.0412,
+            gpu_active_ratio: 0.04,
+            ..Default::default()
+        };
         let s = build_snapshot(inputs_for(&m));
         assert_eq!(s.cpu_pct, 12.4);
         assert_eq!(s.cpu_scaled_pct, 4.1);
@@ -288,14 +290,16 @@ mod tests {
 
     #[test]
     fn cores_are_e_then_p_with_a_dense_id() {
-        let mut m = macmon::Metrics::default();
-        m.ecpu_cores = vec![
+        let m = macmon::Metrics {
+            ecpu_cores: vec![
             macmon::CpuCoreMetrics { die_id: 0, core_id: 0, freq_mhz: 1104, active_ratio: 0.062, scaled_ratio: 0.02 },
             macmon::CpuCoreMetrics { die_id: 0, core_id: 1, freq_mhz: 1200, active_ratio: 0.10,  scaled_ratio: 0.04 },
-        ];
-        m.pcpu_cores = vec![
+        ],
+            pcpu_cores: vec![
             macmon::CpuCoreMetrics { die_id: 0, core_id: 0, freq_mhz: 3204, active_ratio: 0.50, scaled_ratio: 0.40 },
-        ];
+        ],
+            ..Default::default()
+        };
         let s = build_snapshot(inputs_for(&m));
         let ids: Vec<usize> = s.cores.iter().map(|c| c.id).collect();
         let kinds: Vec<CoreKind> = s.cores.iter().map(|c| c.kind).collect();
@@ -308,11 +312,13 @@ mod tests {
 
     #[test]
     fn fans_pass_through_and_omit_absent_max_rpm() {
-        let mut m = macmon::Metrics::default();
-        m.fans = vec![
+        let m = macmon::Metrics {
+            fans: vec![
             macmon::FanMetric { name: "fan0".into(), rpm: 1820, max_rpm: Some(4400) },
             macmon::FanMetric { name: "fan1".into(), rpm: 1790, max_rpm: None },
-        ];
+        ],
+            ..Default::default()
+        };
         let s = build_snapshot(inputs_for(&m));
         let json = serde_json::to_value(&s).unwrap();
         assert_eq!(json["fans"][0]["max_rpm"], 4400);
@@ -322,9 +328,11 @@ mod tests {
 
     #[test]
     fn watts_round_to_two_decimals() {
-        let mut m = macmon::Metrics::default();
-        m.all_power = 8.1234;
-        m.cpu_power = 3.4051;
+        let m = macmon::Metrics {
+            all_power: 8.1234,
+            cpu_power: 3.4051,
+            ..Default::default()
+        };
         let s = build_snapshot(inputs_for(&m));
         assert_eq!(s.power_total_w, 8.12);
         assert_eq!(s.power_cpu_w, 3.41);
