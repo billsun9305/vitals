@@ -13,6 +13,12 @@ PREFIX ?= /usr/local
 # `crates/app/tests/serve.rs` for the same reason — no built assets to serve.
 dashboard:
 	cd dashboard && npm ci && npm run build
+# `vite build` empties outDir, which deletes the committed
+# dashboard/dist/.gitkeep placeholder. That placeholder is what lets a fresh
+# clone compile at all -- include_dir! fails the build outright if
+# dashboard/dist does not exist -- so losing it leaves a dirty tree, and
+# committing the deletion breaks `cargo build` for everyone who clones next.
+	touch dashboard/dist/.gitkeep
 
 build: dashboard
 	cargo build --release
