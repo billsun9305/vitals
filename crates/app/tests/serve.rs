@@ -297,3 +297,53 @@ fn a_non_local_host_header_is_rejected() {
     let (_, code) = text.rsplit_once('\n').unwrap();
     assert_eq!(code.trim(), "200", "localhost must still be served");
 }
+
+/// Two `Host` headers must be refused rather than resolved to either one.
+///
+/// curl cannot send a duplicate header cleanly, so this speaks HTTP directly.
+/// No browser produces this shape; a smuggling proxy does, and picking the
+/// first — as `.find()` did — means the header the *server* validates is not
+/// necessarily the one an intermediary routed on.
+#[test]
+fn duplicate_host_headers_are_refused() {
+    use std::io::{Read, Write};
+
+    let _s = start(9886);
+
+    fn send(raw: &str) -> String {
+        let mut c = std::net::TcpStream::connect("127.0.0.1:9886").expect("connect");
+        c.set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .expect("timeout");
+        c.write_all(raw.as_bytes()).expect("write");
+        let mut out = String::new();
+        let _ = c.read_to_string(&mut out);
+        out
+    }
+
+    for order in [
+        "Host: localhost\r\nHost: evil.example.com",
+        "Host: evil.example.com\r\nHost: localhost",
+        "Host: localhost\r\nHost: localhost",
+    ] {
+        let resp = send(&format!(
+            "GET /api/snapshot HTTP/1.1\r\n{order}\r\nConnection: close\r\n\r\n"
+        ));
+        assert!(
+            resp.starts_with("HTTP/1.1 403"),
+            "two Host headers must be refused ({order:?}), got: {}",
+            resp.lines().next().unwrap_or("")
+        );
+        assert!(
+            !resp.contains("\"cpu_pct\""),
+            "the refused response leaked snapshot data"
+        );
+    }
+
+    // One Host header, same wire path: still served.
+    let resp = send("GET /api/snapshot HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    assert!(
+        resp.starts_with("HTTP/1.1 200"),
+        "a single Host must still be served, got: {}",
+        resp.lines().next().unwrap_or("")
+    );
+}

@@ -107,11 +107,14 @@ pub(super) fn error_body(e: &str) -> String {
 /// the attacker's hostname in `Host`; a real local client sends localhost.
 /// One comparison closes it.
 fn host_is_local(request: &tiny_http::Request) -> bool {
-    let host = request
-        .headers()
-        .iter()
-        .find(|h| h.field.equiv("Host"))
-        .map(|h| h.value.as_str().to_string());
+    let mut hosts = request.headers().iter().filter(|h| h.field.equiv("Host"));
+    let host = hosts.next().map(|h| h.value.as_str().to_string());
+    // Two Host headers is not a shape any real client produces; it is what
+    // request smuggling looks like, and picking either one is a guess. A
+    // security check resolves ambiguity as no.
+    if hosts.next().is_some() {
+        return false;
+    }
 
     host_is_loopback(host.as_deref())
 }
@@ -185,19 +188,70 @@ struct Cache {
 /// it and return.
 pub fn run_dashboard(port: u16) -> Result<(), String> {
     let addr = format!("127.0.0.1:{port}");
-    if std::net::TcpStream::connect_timeout(
-        &addr
-            .parse()
-            .map_err(|e| format!("bad address {addr}: {e}"))?,
-        std::time::Duration::from_millis(300),
-    )
-    .is_ok()
-    {
-        println!("vitals already serving http://{addr}");
-        open_in_browser(&addr);
-        return Ok(());
+    let sock = addr
+        .parse()
+        .map_err(|e| format!("bad address {addr}: {e}"))?;
+    match probe(&sock) {
+        Probe::Vitals => {
+            println!("vitals already serving http://{addr}");
+            open_in_browser(&addr);
+            Ok(())
+        }
+        Probe::Free => run(port, true),
+        Probe::Stranger => Err(format!(
+            "port {port} is held by something that is not vitals; \
+             stop it, or pick another port with --port"
+        )),
     }
-    run(port, true)
+}
+
+/// What is on the port.
+#[derive(Debug, PartialEq, Eq)]
+enum Probe {
+    /// Nothing is listening; we can bind it ourselves.
+    Free,
+    /// A vitals server, which the browser can be pointed at.
+    Vitals,
+    /// Something is listening, but it did not answer like vitals.
+    Stranger,
+}
+
+/// Ask whoever holds `addr` whether they are vitals.
+///
+/// A successful connect only proves *something* is there. Opening a browser
+/// at an unidentified local service would hand it the user's attention under
+/// the URL they associate with this app — and whatever session cookies that
+/// origin already holds. One request settles it: only vitals answers
+/// `/api/snapshot` with a schema version (a warming-up vitals answers 503
+/// with one too, which is still an identification).
+fn probe(addr: &std::net::SocketAddr) -> Probe {
+    use std::io::{Read, Write};
+    let timeout = std::time::Duration::from_millis(300);
+    let Ok(mut s) = std::net::TcpStream::connect_timeout(addr, timeout) else {
+        return Probe::Free;
+    };
+    let _ = s.set_read_timeout(Some(timeout));
+    let _ = s.set_write_timeout(Some(timeout));
+    let req = b"GET /api/snapshot HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+    if s.write_all(req).is_err() {
+        return Probe::Stranger;
+    }
+    // Bounded read: an unknown listener must not be able to stream into this
+    // buffer indefinitely, and the marker appears in the first few bytes of
+    // the body either way.
+    let mut buf = [0u8; 2048];
+    let mut n = 0;
+    while n < buf.len() {
+        match s.read(&mut buf[n..]) {
+            Ok(0) | Err(_) => break,
+            Ok(k) => n += k,
+        }
+    }
+    if String::from_utf8_lossy(&buf[..n]).contains("\"schema_version\"") {
+        Probe::Vitals
+    } else {
+        Probe::Stranger
+    }
 }
 
 fn open_in_browser(addr: &str) {
@@ -382,5 +436,63 @@ mod tests {
         }
         // HTTP/1.0 and hand-rolled clients send no Host at all.
         assert!(host_is_loopback(None));
+    }
+
+    /// Answer one connection with `reply`, then stop. Returns the address.
+    fn one_shot_listener(reply: &'static [u8]) -> std::net::SocketAddr {
+        use std::io::{Read, Write};
+        let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = l.local_addr().expect("addr");
+        std::thread::spawn(move || {
+            if let Ok((mut c, _)) = l.accept() {
+                let mut scratch = [0u8; 1024];
+                let _ = c.read(&mut scratch);
+                let _ = c.write_all(reply);
+            }
+        });
+        addr
+    }
+
+    #[test]
+    fn an_unheld_port_probes_as_free() {
+        // Bind to get a port the OS says is free, then drop it. A tiny race
+        // window, but nothing else in the test suite binds to a fixed port.
+        let addr = std::net::TcpListener::bind("127.0.0.1:0")
+            .expect("bind")
+            .local_addr()
+            .expect("addr");
+        assert_eq!(probe(&addr), Probe::Free);
+    }
+
+    #[test]
+    fn a_listener_that_answers_like_vitals_is_recognised() {
+        let addr = one_shot_listener(
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"schema_version\":1}",
+        );
+        assert_eq!(probe(&addr), Probe::Vitals);
+    }
+
+    #[test]
+    fn some_other_service_on_the_port_is_not_mistaken_for_vitals() {
+        // The whole point: a successful connect is not an identification.
+        // Pointing a browser at this would hand an unrelated local service
+        // the URL the user trusts as their dashboard.
+        let addr = one_shot_listener(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello");
+        assert_eq!(probe(&addr), Probe::Stranger);
+    }
+
+    #[test]
+    fn a_listener_that_accepts_and_says_nothing_is_not_vitals() {
+        // Silence must resolve to Stranger, not hang and not pass. The read
+        // timeout is what bounds this.
+        let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = l.local_addr().expect("addr");
+        let started = std::time::Instant::now();
+        assert_eq!(probe(&addr), Probe::Stranger);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "probe must not block on a silent listener"
+        );
+        drop(l);
     }
 }
