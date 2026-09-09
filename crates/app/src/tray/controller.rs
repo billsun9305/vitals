@@ -47,18 +47,11 @@ use vitals_core::sysctl::mem_pressure_level;
 use vitals_core::thermal::{low_power_mode, on_battery, thermal_state};
 
 use super::panel::PanelView;
-use super::status_item::{format_title, menu_lines};
+use super::status_item::format_title;
 
 /// `NSVariableStatusItemLength`. objc2-app-kit 0.3 does not re-export the
 /// AppKit constant, so it is spelled out here.
 const NS_VARIABLE_STATUS_ITEM_LENGTH: f64 = -1.0;
-
-/// Number of informational rows above the separator.
-const ROWS: usize = 4;
-
-/// The custom-drawn panel occupies item 0; the informational rows follow it,
-/// so every `itemAtIndex` lookup for a row is offset by this much.
-const PANEL_ROWS: usize = 1;
 
 /// Floor on the poll period. The worker never produces samples faster than
 /// once a second (`cadence::SAMPLE_WINDOW_MS`), so polling faster only burns
@@ -80,7 +73,6 @@ const FAILED_TITLE: &str = "⚠";
 
 pub struct Ivars {
     status_item: Retained<NSStatusItem>,
-    menu: Retained<NSMenu>,
     /// The custom-drawn dropdown view hosted in item 0. Fed only while the
     /// menu is open — see `apply_sample` and `menuDidClose:`.
     panel: Retained<PanelView>,
@@ -89,7 +81,6 @@ pub struct Ivars {
     state: Cell<TrayState>,
     /// Last string handed to AppKit, so an unchanged tick costs nothing.
     last_title: RefCell<String>,
-    last_rows: RefCell<[String; ROWS]>,
     last_snapshot: RefCell<Option<Snapshot>>,
     last_error: RefCell<Option<String>>,
     timer: RefCell<Option<Retained<NSTimer>>>,
@@ -201,11 +192,12 @@ define_class!(
         #[unsafe(method(menuWillOpen:))]
         fn menu_will_open(&self, _menu: &NSMenu) {
             self.mutate_state(|s| s.menu_open = true);
-            // Paint what we already have rather than waiting a tick.
-            self.write_rows();
-            if let Some(snapshot) = self.ivars().last_snapshot.borrow().as_ref() {
-                let core_pcts: Vec<f32> = snapshot.cores.iter().map(|c| c.pct).collect();
-                self.ivars().panel.update(core_pcts, snapshot.cpu_pct);
+            // Paint what we already have rather than waiting a tick. `show`,
+            // not `push_sample`: the last snapshot is not a new point.
+            if let Some(error) = self.ivars().last_error.borrow().as_deref() {
+                self.ivars().panel.show_error(error);
+            } else if let Some(snapshot) = self.ivars().last_snapshot.borrow().as_ref() {
+                self.ivars().panel.show(snapshot);
             }
         }
 
@@ -244,33 +236,25 @@ impl Controller {
         let panel = PanelView::new(mtm);
 
         let menu = NSMenu::new(mtm);
-        // The informational rows carry no action, and AppKit's automatic
-        // enabling would grey them out anyway; make it explicit so Quit's
-        // state does not depend on responder-chain lookup either.
+        // The panel item carries no action, and AppKit's automatic enabling
+        // would grey it out; make it explicit so the two real items' state
+        // does not depend on responder-chain lookup either.
         menu.setAutoenablesItems(false);
 
-        // The panel occupies item 0; everything below shifts down by
-        // `PANEL_ROWS` (see `write_rows`).
+        // The whole readout is one custom view at item 0; the only text
+        // items are the two actions below the separator.
         let panel_item = NSMenuItem::new(mtm);
         panel_item.setView(Some(&panel));
-        menu.insertItem_atIndex(&panel_item, 0);
-
-        for _ in 0..ROWS {
-            let item = NSMenuItem::new(mtm);
-            item.setEnabled(false);
-            menu.addItem(&item);
-        }
+        menu.addItem(&panel_item);
         menu.addItem(&NSMenuItem::separatorItem(mtm));
 
         let ivars = Ivars {
             status_item: status_item.clone(),
-            menu: menu.clone(),
             panel,
             handle,
             cadence,
             state: Cell::new(state),
             last_title: RefCell::new(PLACEHOLDER_TITLE.to_string()),
-            last_rows: RefCell::new(std::array::from_fn(|_| String::new())),
             last_snapshot: RefCell::new(None),
             last_error: RefCell::new(None),
             timer: RefCell::new(None),
@@ -473,15 +457,10 @@ impl Controller {
 
         *self.ivars().last_error.borrow_mut() = None;
         self.set_title(&format_title(&snapshot));
-        let menu_open = self.ivars().state.get().menu_open;
-        if menu_open {
-            let core_pcts: Vec<f32> = snapshot.cores.iter().map(|c| c.pct).collect();
-            self.ivars().panel.update(core_pcts, snapshot.cpu_pct);
+        if self.ivars().state.get().menu_open {
+            self.ivars().panel.push_sample(&snapshot);
         }
         *self.ivars().last_snapshot.borrow_mut() = Some(snapshot);
-        if menu_open {
-            self.write_rows();
-        }
         // The first sample retires the fast start-up poll.
         self.sync_timer();
     }
@@ -517,8 +496,12 @@ impl Controller {
             // menu, where the next successful sample will clear it.
             *self.ivars().last_error.borrow_mut() = Some(message);
         }
+        // Show what is latched, not what just arrived: for a dead worker
+        // that is the cause, which is the message worth reading.
         if self.ivars().state.get().menu_open {
-            self.write_rows();
+            if let Some(error) = self.ivars().last_error.borrow().as_deref() {
+                self.ivars().panel.show_error(error);
+            }
         }
     }
 
@@ -534,39 +517,5 @@ impl Controller {
             button.setTitle(&NSString::from_str(title));
         }
         *self.ivars().last_title.borrow_mut() = title.to_string();
-    }
-
-    /// The rows the dropdown should currently show.
-    fn rows(&self) -> [String; ROWS] {
-        if let Some(error) = self.ivars().last_error.borrow().clone() {
-            let mut rows: [String; ROWS] = std::array::from_fn(|_| String::new());
-            rows[0] = format!("⚠  {error}");
-            return rows;
-        }
-        match self.ivars().last_snapshot.borrow().as_ref() {
-            Some(snapshot) => menu_lines(snapshot),
-            None => {
-                let mut rows: [String; ROWS] = std::array::from_fn(|_| String::new());
-                rows[0] = "sampling…".to_string();
-                rows
-            }
-        }
-    }
-
-    /// Push the rows into the menu, skipping the work when nothing changed.
-    /// Only ever called with the menu open — budget rule 3.
-    fn write_rows(&self) {
-        let rows = self.rows();
-        if *self.ivars().last_rows.borrow() == rows {
-            return;
-        }
-        for (index, line) in rows.iter().enumerate() {
-            // Item 0 is the panel; the informational rows start at `PANEL_ROWS`.
-            if let Some(item) = self.ivars().menu.itemAtIndex((index + PANEL_ROWS) as isize) {
-                item.setTitle(&NSString::from_str(line));
-                item.setHidden(line.is_empty());
-            }
-        }
-        *self.ivars().last_rows.borrow_mut() = rows;
     }
 }

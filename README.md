@@ -320,10 +320,17 @@ programmatically rather than glanced at.
 ## The menu bar app
 
 `vitals` run with no arguments is a menu bar tray: an `NSStatusItem`
-showing live text plus a custom-drawn dropdown (per-core bars, a CPU
-sparkline) — no continuous graph redraw while the dropdown is closed, and
-the sampling cadence backs off automatically while the display sleeps.
-See `docs/budget.md` for the measured idle cost.
+showing live text plus a custom-drawn dropdown in four sections — CPU (a
+sparkline of the time the menu has been open, then one bar per core with
+efficiency and performance cores tinted differently), GPU, memory (judged by
+the kernel's own pressure signal, not just the used fraction), and power.
+Headline values turn orange at 70% and red at 90%. Nothing redraws while
+the dropdown is closed, and the sampling cadence backs off automatically
+while the display sleeps. See `docs/budget.md` for the measured idle cost.
+
+To look at the dropdown without opening a menu — for instance to check it in
+both themes, or its empty and error states — `cargo run --release --example
+render_panel -- /tmp/panel` paints the same `drawRect:` to PNG.
 
 **It has no window.** `LSUIElement` means no Dock icon and no app-switcher
 entry, so there is nothing for a click to bring forward — the app *is* the

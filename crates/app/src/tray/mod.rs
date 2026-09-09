@@ -8,7 +8,7 @@
 //! see `controller`'s note on `powerChanged:`.
 
 mod controller;
-mod panel;
+pub mod panel;
 pub mod status_item;
 
 use objc2::runtime::ProtocolObject;

@@ -22,22 +22,6 @@ pub fn format_title(s: &Snapshot) -> String {
     }
 }
 
-/// The four informational rows of the dropdown, in order.
-pub fn menu_lines(s: &Snapshot) -> [String; 4] {
-    [
-        format!(
-            "CPU  {:.1}%   E {:.1}%   P {:.1}%",
-            s.cpu_pct, s.ecpu_pct, s.pcpu_pct
-        ),
-        format!("GPU  {:.1}%   {} MHz", s.gpu_pct, s.gpu_freq_mhz),
-        format!(
-            "MEM  {} / {} MB   swap {} MB",
-            s.mem_used_mb, s.mem_total_mb, s.swap_used_mb
-        ),
-        format!("PWR  {:.2} W   {:.1}°C", s.power_total_w, s.temp_cpu_c),
-    ]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,22 +108,5 @@ mod tests {
         // budget, so the branch has to fire below 100 GB, not at it.
         assert_eq!(format_title(&snap(100.0, 102_348)), "100% · 99.9G");
         assert_eq!(format_title(&snap(100.0, 102_349)), "100% · 100G");
-    }
-
-    #[test]
-    fn menu_lines_report_every_headline_number() {
-        let mut s = snap(12.4, 18_211);
-        s.ecpu_pct = 8.1;
-        s.pcpu_pct = 21.0;
-        s.gpu_pct = 4.0;
-        s.gpu_freq_mhz = 444;
-        s.swap_used_mb = 2_048;
-        s.power_total_w = 8.12;
-        s.temp_cpu_c = 51.5;
-        let lines = menu_lines(&s);
-        assert_eq!(lines[0], "CPU  12.4%   E 8.1%   P 21.0%");
-        assert_eq!(lines[1], "GPU  4.0%   444 MHz");
-        assert_eq!(lines[2], "MEM  18211 / 36864 MB   swap 2048 MB");
-        assert_eq!(lines[3], "PWR  8.12 W   51.5°C");
     }
 }
