@@ -9,6 +9,17 @@ use vitals_core::thermal::thermal_state;
 /// enough for stable IOReport deltas.
 pub const DEFAULT_INTERVAL_MS: u32 = 200;
 
+/// Floor on any requested sampling window.
+///
+/// `--interval 0` used to be accepted and produce a straight-faced reading
+/// with `"sample_ms": 0` and junk in it (a 50% CPU figure on an idle
+/// machine), because IOReport deltas over a zero-length window are
+/// meaningless. `watch` already clamped 0 to one second; the one-shot verbs
+/// silently did not, so the same input meant two different things. Clamping
+/// rather than rejecting matches `watch`, and 20ms is low enough that anyone
+/// deliberately asking for a tight window still gets one.
+pub const MIN_INTERVAL_MS: u32 = 20;
+
 #[derive(Parser, Debug)]
 #[command(name = "vitals", version, about = "Apple Silicon system monitor")]
 pub struct Cli {
@@ -85,7 +96,7 @@ pub enum Command {
 
 /// Collect a snapshot with every field populated.
 pub fn collect_snapshot(interval_ms: u32) -> Result<Snapshot, String> {
-    let sample = sample_once(interval_ms)?;
+    let sample = sample_once(interval_ms.max(MIN_INTERVAL_MS))?;
     Ok(build_snapshot(SnapshotInputs {
         metrics: &sample.metrics,
         host: sample.host.clone(),

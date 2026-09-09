@@ -23,7 +23,10 @@ regression is attributable to that change rather than to everything at once.
 | Parked across display sleep: cumulative CPU essentially unchanged | **0.02s across ~40s asleep** (0.05%), against 0.15% awake | pass |
 
 For comparison, `vitals serve` on the same machine: 0.22s of CPU per 30s of
-1 Hz polling, and no measurable CPU at all once idle for 10s and parked.
+1 Hz polling of `/api/snapshot`, and effectively nothing once idle for 10s
+and parked. See [The server, honestly](#the-server-honestly) below — that
+0.22s figure measures one endpoint, not what an open dashboard actually
+does.
 
 ## Two places the plan's method was wrong
 
@@ -168,3 +171,48 @@ dashboard — HTML, CSS and a 196 KB JS bundle — inside the executable so that
 of the ceiling. Idle CPU and footprint moved within noise; neither the
 dashboard's assets nor the panel cost anything while nothing is looking at
 them, which is the property the whole design is built around.
+
+## The server, honestly
+
+Two corrections to the `vitals serve` line near the top of this file, both
+found by the final whole-branch review.
+
+**"0.22s per 30s" measured only `/api/snapshot`.** The shipped dashboard also
+polls `/api/top` and `/api/pressure` every 5 seconds, and each of those walks
+the whole process table. Measured on the real poll pattern:
+
+| | CPU per 30s of dashboard polling |
+|---|---|
+| As first written | **2.09s (~7%)** |
+| After the review's fixes | **0.93s (~3.1%)** |
+
+The bulk of that saving was `/api/pressure` standing up a second
+`macmon::Sampler` on every request — about half a second of setup — and
+sampling the SoC concurrently with the server's own background worker. It now
+evaluates from the snapshot the worker already cached. What remains is two
+process-table enumerations per 5-second tick, which is the honest cost of the
+questions being asked. An open dashboard is an active state; the design
+promise is that a *closed* one costs nothing, and that still holds.
+
+**"No measurable CPU at all" was slightly too strong.** The server's cache
+thread wakes every 250ms regardless, so a parked, idle server still costs
+about 0.01s per 60s. That is 0.017%, far below anything that matters, but it
+is not zero, and it is the one loop in the product that never parks.
+
+## Idle cost depends on how busy the machine is
+
+The same installed binary, measured twice:
+
+| Conditions | Idle CPU |
+|---|---|
+| Quiet machine | **0.183%** over 60s |
+| Load average 55-84 | **0.267%** over 180s |
+
+Both pass the 0.3% ceiling, but the second is close to it, and no code
+changed between them. Sampling costs more per unit of work on a contended
+machine — more context switches, colder caches. Worth stating plainly because
+it cuts against the grain of the measurement: the tool is at its most
+expensive exactly when the machine is already struggling, which is exactly
+when someone is looking at it. Every other figure in this file was taken on a
+relatively quiet machine and should be read as a floor rather than a
+guarantee.

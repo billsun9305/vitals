@@ -78,3 +78,31 @@ verbs):
 An agent answering "why is my Mac slow" can quote `summary` directly, or
 walk `reasons`/`suspects` for a structured answer — no arithmetic on raw
 `snapshot` fields required.
+
+
+## If you would rather poll HTTP than spawn a process
+
+`vitals serve` exposes the same three one-shot answers over loopback:
+`GET /api/snapshot`, `/api/top`, `/api/pressure`, on `127.0.0.1:9876` by
+default. Same schema as the CLI, same `schema_version`, same units in the key
+names. Useful if you are already long-running and would rather not pay
+process spawn per question; the CLI is still the simpler choice for one-off
+questions, and costs nothing when you are not asking.
+
+Three things to know:
+
+- `/api/snapshot` is served from a cache the server refreshes once a second,
+  so it answers instantly but can be up to a second old. `/api/top` and
+  `/api/pressure` are computed per request and take ~200ms.
+- **Every** response is JSON with a `schema_version`, errors included: a 404
+  for a mistyped path, a 503 while the first sample is still landing, a 500
+  on a sampling failure. You never have to parse a bare string.
+- The server refuses any request whose `Host` header is not loopback,
+  returning 403. That is deliberate — it blocks a web page from reaching your
+  process table by DNS rebinding — so send `Host: localhost` or
+  `Host: 127.0.0.1`, which is what any normal client does anyway.
+
+Unlike the CLI, `/api/pressure` does not write the trend baseline. A polling
+client should not keep resetting the window the swap-growth rules measure
+across; if you want those rules to fire, let `vitals pressure` be what runs
+periodically.

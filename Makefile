@@ -1,7 +1,7 @@
 BIN := target/release/vitals
 PREFIX ?= /usr/local
 
-.PHONY: build test install uninstall fmt lint dashboard bundle install-app uninstall-app
+.PHONY: build test test-perf install uninstall fmt lint dashboard bundle install-app uninstall-app
 
 # The React dashboard `crates/app/src/serve/assets.rs` embeds via
 # `include_dir!`. That macro only needs `dashboard/dist` to exist (a fresh
@@ -25,6 +25,17 @@ build: dashboard
 
 test: dashboard
 	cargo test --workspace
+
+# The two tests that actually protect the idle budget are #[ignore]d, because
+# each takes ~16s of wall clock deliberately spent doing nothing. That means
+# `make test` never runs them, so they are here instead -- run this before
+# changing anything in cadence.rs or the sampler worker. They live in
+# separate test binaries on purpose: park_cost measures RUSAGE_SELF, which
+# sums every thread in the process, so a concurrent cadence test would
+# pollute it.
+test-perf:
+	cargo test -p vitals-core --test park_cost -- --ignored --nocapture
+	cargo test -p vitals-core --test cadence_period -- --ignored --nocapture
 
 fmt:
 	cargo fmt --all

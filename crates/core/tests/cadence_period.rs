@@ -9,7 +9,10 @@ use std::time::{Duration, Instant};
 use vitals_core::cadence::Cadence;
 
 /// Ignored by default: ~16s. Run with
-/// `cargo test -p vitals-core --test park_cost -- --ignored --nocapture`.
+/// `cargo test -p vitals-core --test cadence_period -- --ignored --nocapture`,
+/// or via `make test-perf`. (This said `--test park_cost` until the final
+/// review: that is the OTHER budget test, and it lives in its own binary
+/// precisely because RUSAGE_SELF sums every thread in the process.)
 ///
 /// `get_metrics` measures from the last sample point rather than blocking
 /// afresh, so once a gap has already elapsed it returns in ~12ms. A worker
