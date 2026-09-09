@@ -5,8 +5,13 @@
 //! against a single earlier point. One atomically-replaced file has no
 //! locking, no partial-write window, and no stale-index failure mode.
 //!
-//! Only CLI invocations write this file. The tray never does — that would
-//! be cross-process coupling by the back door.
+//! Only one-shot invocations write this file: `vitals pressure` from the
+//! command line. The tray never does, and neither does `/api/pressure` —
+//! see `Baseline::ReadOnly` in the app crate. A continuously-polling face
+//! that stored a baseline would reset it faster than any trend could
+//! accumulate, disabling swap-growth detection for every reader rather than
+//! just itself. Writing here is a claim about when the last *question* was
+//! asked, not about when the process last sampled.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};

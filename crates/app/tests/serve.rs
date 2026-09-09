@@ -221,3 +221,79 @@ fn a_real_embedded_asset_is_served() {
     let (code, _) = get(9882, &asset_path);
     assert_eq!(code, 200, "expected referenced asset {asset_path} to serve");
 }
+
+/// Every response is parseable JSON carrying `schema_version` — errors too.
+///
+/// docs/agents.md promises this without qualification, and an agent that
+/// mistypes an endpoint is exactly the caller that most needs a structured
+/// answer rather than a bare `not found` it cannot parse. Note the unknown
+/// path is served by `assets::serve`, not `Route::NotFound`: anything under
+/// `/` is routed as an asset request first, so that is the common 404.
+#[test]
+fn every_error_response_is_json_with_a_schema_version() {
+    let _s = start(9883);
+    for path in [
+        "/nope",
+        "/deeply/nested/missing.js",
+        "/favicon.does-not-exist",
+    ] {
+        let (code, body) = get(9883, path);
+        assert_eq!(code, 404, "expected 404 for {path}");
+        let v: serde_json::Value = serde_json::from_str(&body)
+            .unwrap_or_else(|e| panic!("body for {path} is not JSON ({e}): {body}"));
+        assert_eq!(v["schema_version"], 1, "missing schema_version for {path}");
+        assert!(v["error"].is_string(), "missing error string for {path}");
+    }
+}
+
+/// A non-loopback `Host` is refused, because binding 127.0.0.1 does not stop
+/// DNS rebinding: an attacker's page can re-resolve its own domain to
+/// 127.0.0.1 and have the victim's browser make the request, then read the
+/// full process table. The browser sends the attacker's hostname in `Host`.
+#[test]
+fn a_non_local_host_header_is_rejected() {
+    let _s = start(9884);
+
+    let out = std::process::Command::new("curl")
+        .args([
+            "-s",
+            "-o",
+            "/dev/stdout",
+            "-w",
+            "\n%{http_code}",
+            "-H",
+            "Host: evil.example.com",
+            "http://127.0.0.1:9884/api/snapshot",
+        ])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    let (body, code) = text.rsplit_once('\n').unwrap();
+    assert_eq!(
+        code.trim(),
+        "403",
+        "a rebound Host must be refused, got {code}"
+    );
+    assert!(
+        !body.contains("\"cpu_pct\""),
+        "the refused response leaked snapshot data: {body}"
+    );
+
+    // A real local client must still work, port suffix and all.
+    let out = std::process::Command::new("curl")
+        .args([
+            "-s",
+            "-o",
+            "/dev/stdout",
+            "-w",
+            "\n%{http_code}",
+            "-H",
+            "Host: localhost:9884",
+            "http://127.0.0.1:9884/api/snapshot",
+        ])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    let (_, code) = text.rsplit_once('\n').unwrap();
+    assert_eq!(code.trim(), "200", "localhost must still be served");
+}

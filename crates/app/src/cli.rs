@@ -183,8 +183,49 @@ pub fn exit_code_for(state: Severity) -> i32 {
 /// The two ~`interval_ms` windows then overlap rather than running back to
 /// back, which is one window of latency instead of two.
 pub fn collect_pressure(interval_ms: u32) -> Result<Verdict, String> {
+    collect_pressure_inner(interval_ms, Baseline::Store)
+}
+
+/// Whether this caller is allowed to overwrite the stored trend baseline.
+///
+/// Only a one-shot invocation should: the baseline exists so that the NEXT
+/// question can be answered with a delta. A face that asks continuously —
+/// the dashboard polls `/api/pressure` every 5 seconds — would reset it on
+/// every poll, leaving every reader a 5-second-old baseline. The swap rules
+/// need +256 MB (and +1024 MB for the fast one) BETWEEN observations, so a
+/// single open browser tab would silently disable swap-trend detection for
+/// everyone, the terminal included.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Baseline {
+    Store,
+    ReadOnly,
+}
+
+pub fn collect_pressure_inner(interval_ms: u32, baseline: Baseline) -> Result<Verdict, String> {
     let procs_thread = std::thread::spawn(collect);
     let snap = collect_snapshot(interval_ms)?;
+    finish_pressure(snap, procs_thread, baseline)
+}
+
+/// Evaluate a verdict from a snapshot somebody else already took.
+///
+/// `vitals serve` keeps a background sampler running and caches its latest
+/// `Snapshot`. Without this entry point `/api/pressure` went through
+/// `collect_snapshot`, which builds a whole new `macmon::Sampler` — roughly
+/// half a second of setup — and samples the SoC *concurrently with the
+/// server's own sampler*. Two samplers reading IOReport at once is the exact
+/// thing the cadence design exists to prevent, and it happened on every
+/// dashboard poll.
+pub fn pressure_from_snapshot(snap: Snapshot, baseline: Baseline) -> Result<Verdict, String> {
+    let procs_thread = std::thread::spawn(collect);
+    finish_pressure(snap, procs_thread, baseline)
+}
+
+fn finish_pressure(
+    snap: Snapshot,
+    procs_thread: std::thread::JoinHandle<Vec<vitals_core::procs::ProcSample>>,
+    baseline: Baseline,
+) -> Result<Verdict, String> {
     let mut rows = procs_thread
         .join()
         .map_err(|_| "process collector panicked".to_string())?;
@@ -234,7 +275,9 @@ pub fn collect_pressure(interval_ms: u32) -> Result<Verdict, String> {
     // Store after evaluating, so this run's numbers become the next
     // baseline. History is best-effort by design: a write failure must not
     // fail the command, since the verdict computed above is already valid.
-    let _ = history::store(&observation);
+    if baseline == Baseline::Store {
+        let _ = history::store(&observation);
+    }
 
     Ok(verdict)
 }

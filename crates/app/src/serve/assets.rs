@@ -54,9 +54,11 @@ fn respond(path: &str, bytes: &[u8]) -> Response<Cursor<Vec<u8>>> {
 pub fn index() -> Response<Cursor<Vec<u8>>> {
     match DIST.get_file("index.html") {
         Some(f) => respond("index.html", f.contents()),
-        None => {
-            Response::from_string("dashboard not built; run `make dashboard`").with_status_code(500)
-        }
+        None => Response::from_string(super::error_body(
+            "dashboard not built; run `make dashboard`",
+        ))
+        .with_header(Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap())
+        .with_status_code(500),
     }
 }
 
@@ -68,7 +70,16 @@ pub fn index() -> Response<Cursor<Vec<u8>>> {
 pub fn serve(path: &str) -> Response<Cursor<Vec<u8>>> {
     match DIST.get_file(path) {
         Some(f) => respond(path, f.contents()),
-        None => Response::from_string("not found").with_status_code(404),
+        // JSON, like every other error this server emits. Most 404s arrive
+        // here rather than at `Route::NotFound`, because any unmatched path
+        // under `/` is routed as an asset request first — so a plain-text
+        // body here would break the "every response is parseable JSON"
+        // contract for the overwhelmingly common case.
+        None => Response::from_string(super::error_body("not found"))
+            .with_header(
+                Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap(),
+            )
+            .with_status_code(404),
     }
 }
 

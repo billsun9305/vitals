@@ -19,7 +19,7 @@ fn main() {
         }) => cli::run_pressure(interval, human, exit_code),
         Some(Command::Watch { interval_s, count }) => cli::run_watch(interval_s, count),
         Some(Command::Serve { port, no_open }) => serve::run(port, !no_open),
-        Some(Command::Dashboard { port }) => serve::run(port, true),
+        Some(Command::Dashboard { port }) => serve::run_dashboard(port),
         None => tray::run(),
     };
     if let Err(e) = result {
