@@ -1,19 +1,59 @@
+/*
+ * Design tokens. Every colour on the page is one of these roles; nothing in
+ * a component is a raw hex.
+ *
+ * Chart colours follow the dataviz method, and were validated, not chosen by
+ * eye (`validate_palette.js`, light and dark, adjacent pairlist):
+ *
+ *   categorical theme  [blue, aqua]  — blue for P-cores and every
+ *                      single-series chart, aqua for E-cores. Worst pair
+ *                      ΔE 23.1 light / 19.6 dark under simulated CVD
+ *                      (target ≥ 8); normal-vision 24.0 / 20.9 (floor 15).
+ *                      Aqua sits at 2.74:1 on the light surface — the
+ *                      relief rule applies, so the core chart carries a
+ *                      legend, labels and a table view.
+ *   status             fixed scale, never a series colour. The *mark* hexes
+ *                      are used only on dots, fills and stripes; text in a
+ *                      status colour uses the -text steps, which clear
+ *                      4.5:1 on their surface (light 5.8–7.4, dark 5.2–9.5).
+ *
+ * The same aqua/blue split is what the menu bar dropdown uses, so the two
+ * faces of the app read the same core the same way.
+ */
 :root {
-  --text: #3f3f46;
-  --text-muted: #71717a;
-  --heading: #09090b;
-  --bg: #fafafa;
-  --panel-bg: #ffffff;
-  --border: #e4e4e7;
-  --accent: #2563eb;
-  --ok: #16a34a;
-  --warn: #d97706;
-  --critical: #dc2626;
-
   color-scheme: light dark;
-  color: var(--text);
-  background: var(--bg);
-  font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --surface-2: #f3f3f0;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --ink-3: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.1);
+  --wash: rgba(11, 11, 11, 0.04);
+
+  --s1: #2a78d6;
+  --s1-track: #cde2fb;
+  --s1-wash: rgba(42, 120, 214, 0.1);
+  --s2: #1baf7a;
+  --s2-text: #0b7a55;
+
+  --st-good: #0ca30c;
+  --st-warn: #fab219;
+  --st-serious: #ec835a;
+  --st-crit: #d03b3b;
+  --st-good-text: #006300;
+  --st-warn-text: #8a5a00;
+  --st-serious-text: #a4471f;
+  --st-crit-text: #a32d2d;
+  --st-warn-track: rgba(250, 178, 25, 0.22);
+  --st-crit-track: rgba(208, 59, 59, 0.18);
+
+  color: var(--ink);
+  background: var(--page);
+  font: 14px/1.45 system-ui, -apple-system, 'Segoe UI', sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -22,16 +62,29 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --text: #d4d4d8;
-    --text-muted: #a1a1aa;
-    --heading: #fafafa;
-    --bg: #0a0a0b;
-    --panel-bg: #16161a;
-    --border: #2a2a2e;
-    --accent: #60a5fa;
-    --ok: #4ade80;
-    --warn: #fbbf24;
-    --critical: #f87171;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --surface-2: #222220;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --ink-3: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255, 255, 255, 0.1);
+    --wash: rgba(255, 255, 255, 0.05);
+
+    --s1: #3987e5;
+    --s1-track: #184f95;
+    --s1-wash: rgba(57, 135, 229, 0.14);
+    --s2: #199e70;
+    --s2-text: #3fbf8f;
+
+    --st-good-text: #0ca30c;
+    --st-warn-text: #fab219;
+    --st-serious-text: #ec835a;
+    --st-crit-text: #e66767;
+    --st-warn-track: rgba(250, 178, 25, 0.26);
+    --st-crit-track: rgba(230, 103, 103, 0.24);
   }
 }
 
@@ -44,24 +97,15 @@ body {
 }
 
 h1,
-h2 {
-  color: var(--heading);
-  font-weight: 600;
-  margin: 0;
-}
-
-h1 {
-  font-size: 1.375rem;
-  letter-spacing: -0.01em;
-}
-
-h2 {
-  font-size: 1rem;
-  margin-bottom: 8px;
-}
-
+h2,
+h3,
 p {
   margin: 0;
+}
+
+button {
+  font: inherit;
+  color: inherit;
 }
 
 table {
@@ -73,12 +117,28 @@ table {
 th,
 td {
   text-align: left;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--border);
-  font-size: 0.875rem;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--grid);
+  font-size: 0.8125rem;
+  vertical-align: middle;
 }
 
 th {
-  color: var(--text-muted);
+  color: var(--ink-3);
   font-weight: 500;
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
+}
+
+td.num,
+th.num {
+  text-align: right;
+}
+
+tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+tbody tr:hover td {
+  background: var(--wash);
 }

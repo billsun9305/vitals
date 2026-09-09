@@ -163,10 +163,10 @@ is superseded. Re-measured on the finished product, same machine and method:
 |---|---|---|---|
 | Idle CPU < 0.3% | 0.167% | **0.183%** — 0.11s over 60s | pass |
 | Memory < 25 MB | 15.9 MB | **17.2 MB** physical footprint | pass |
-| Binary < 6 MB | 0.87 MB | **1.07 MB** (1,125,168 bytes) | pass |
+| Binary < 6 MB | 0.87 MB | **1.18 MB** (1,175,040 bytes) | pass |
 
 The binary grew by ~200 KB, which is the gzip-era cost of carrying the whole
-dashboard — HTML, CSS and a 196 KB JS bundle — inside the executable so that
+dashboard — HTML, CSS and a 209 KB JS bundle — inside the executable so that
 `vitals serve` has no runtime dependency on a build directory. Still a sixth
 of the ceiling. Idle CPU and footprint moved within noise; neither the
 dashboard's assets nor the panel cost anything while nothing is looking at
