@@ -28,9 +28,9 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadOnly};
 use objc2_app_kit::{
-    NSAlert, NSApplication, NSApplicationDelegate, NSFont, NSMenu, NSMenuDelegate, NSMenuItem,
-    NSStatusBar, NSStatusItem, NSWorkspace, NSWorkspaceScreensDidSleepNotification,
-    NSWorkspaceScreensDidWakeNotification,
+    NSAlert, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSFont, NSMenu,
+    NSMenuDelegate, NSMenuItem, NSStatusBar, NSStatusItem, NSWindowDelegate, NSWorkspace,
+    NSWorkspaceScreensDidSleepNotification, NSWorkspaceScreensDidWakeNotification,
 };
 use objc2_foundation::{
     MainThreadMarker, NSNotification, NSNotificationCenter,
@@ -48,6 +48,7 @@ use vitals_core::thermal::{low_power_mode, on_battery, thermal_state};
 
 use super::panel::PanelView;
 use super::status_item::format_title;
+use super::window::DashboardWindow;
 
 /// `NSVariableStatusItemLength`. objc2-app-kit 0.3 does not re-export the
 /// AppKit constant, so it is spelled out here.
@@ -88,6 +89,10 @@ pub struct Ivars {
     timer_period_ms: Cell<Option<u32>>,
     /// Latch for a worker that will never produce another sample.
     sampler_dead: Cell<bool>,
+    /// The dashboard window, built lazily on the first `show_dashboard` and
+    /// kept for the rest of the run — see `window`'s module doc for why
+    /// closing it never tears it down.
+    dashboard_window: RefCell<Option<DashboardWindow>>,
 }
 
 define_class!(
@@ -208,6 +213,30 @@ define_class!(
             self.ivars().panel.clear_history();
         }
     }
+
+    unsafe impl NSWindowDelegate for Controller {
+        /// The red button or ⌘W, not app quit — that stays open (see
+        /// `quit:`) and is the standard meaning of ⌘Q from any window.
+        ///
+        /// `setReleasedWhenClosed(false)` means the window survives this as
+        /// an object; what must not survive is the page it was showing.
+        /// Blanking it is unconditional rather than relying on the page's
+        /// own `document.visibilityState` gating, because a closed window
+        /// is exactly the case this app's idle-cost promise cannot afford
+        /// to get wrong by assumption — see the report for what was
+        /// actually observed.
+        #[unsafe(method(windowWillClose:))]
+        fn window_will_close(&self, _notification: &NSNotification) {
+            if let Some(window) = self.ivars().dashboard_window.borrow().as_ref() {
+                window.blank();
+            }
+            // Mirrors the `setActivationPolicy(Regular)` in `show_window`:
+            // the Dock tile exists only while the window does.
+            let mtm = MainThreadMarker::from(self);
+            NSApplication::sharedApplication(mtm)
+                .setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+        }
+    }
 );
 
 impl Controller {
@@ -260,6 +289,7 @@ impl Controller {
             timer: RefCell::new(None),
             timer_period_ms: Cell::new(None),
             sampler_dead: Cell::new(false),
+            dashboard_window: RefCell::new(None),
         };
 
         let this = Self::alloc(mtm).set_ivars(ivars);
@@ -295,21 +325,18 @@ impl Controller {
         this
     }
 
-    /// Start the dashboard if it is not up, then open it in a browser.
+    /// Start the dashboard if it is not up, then show it in our own window.
     ///
-    /// Runs on the main thread, and deliberately splits at the slow part.
-    /// `ensure_running` is loopback-only and measured at ~4ms cold (starting
-    /// a server) and ~0.5ms warm (one already up), so it can block the main
-    /// thread — and its failure needs an alert, which must be on the main
-    /// thread anyway. `open_in_browser` cannot: it waits on the `open`
-    /// process, which is long enough to stutter the menu closing. Only that
-    /// goes to a thread.
+    /// Runs on the main thread. `ensure_running` is loopback-only and
+    /// measured at ~4ms cold (starting a server) and ~0.5ms warm (one
+    /// already up), so it can block the main thread — and its failure needs
+    /// an alert, which must be on the main thread anyway. Unlike the old
+    /// browser path, showing the window itself is also main-thread work
+    /// (it touches AppKit), so nothing here goes to a background thread.
     fn show_dashboard(&self) {
         let mtm = MainThreadMarker::from(self);
         match crate::serve::ensure_running(crate::serve::DEFAULT_PORT) {
-            Ok(addr) => {
-                std::thread::spawn(move || crate::serve::open_in_browser(&addr));
-            }
+            Ok(addr) => self.show_window(mtm, &format!("http://{addr}/")),
             Err(e) => {
                 let alert = NSAlert::new(mtm);
                 alert.setMessageText(&NSString::from_str("Cannot open the dashboard"));
@@ -317,6 +344,49 @@ impl Controller {
                 alert.runModal();
             }
         }
+    }
+
+    /// Create the dashboard window on first use, or reload and front an
+    /// existing one, then bring the app forward.
+    ///
+    /// Creating and loading happen before the app is made `Regular`: an
+    /// `LSUIElement` app has no Dock tile until then, so flipping the
+    /// policy first would still leave nothing for the user to click while
+    /// the window comes up. The reverse order — window ready, then
+    /// forward — is what makes the transition read as "a window appeared",
+    /// not "a Dock icon appeared, then eventually a window".
+    fn show_window(&self, mtm: MainThreadMarker, url: &str) {
+        let mut slot = self.ivars().dashboard_window.borrow_mut();
+        if slot.is_none() {
+            let delegate = ProtocolObject::from_ref(self);
+            *slot = Some(DashboardWindow::new(mtm, url, delegate));
+        } else if let Some(window) = slot.as_ref() {
+            // `is_visible` is false only after the user closed it (see
+            // `windowWillClose:`); reload what `blank()` cleared before
+            // bringing it back, rather than on every reopen.
+            if !window.is_visible() {
+                window.load(url);
+            }
+        }
+        if let Some(window) = slot.as_ref() {
+            window.front();
+        }
+        drop(slot);
+
+        // `LSUIElement` apps have no Dock tile or app-switcher entry by
+        // default; without this the window opens behind everything with no
+        // way to find it. Paired with `windowWillClose:` restoring
+        // `Accessory`, the Dock icon exists only while the window does.
+        let app = NSApplication::sharedApplication(mtm);
+        app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
+        // `activate` (no `ignoringOtherApps` argument) is the macOS-14+
+        // replacement for `activateIgnoringOtherApps(true)`, which
+        // `objc2-app-kit` 0.3.2 already flags deprecated; `Info.plist`
+        // already requires 14.0 (`LSMinimumSystemVersion`), so there is no
+        // older-OS case to fall back for. Behaviourally it is the same
+        // request the brief asked for: come forward even if another app is
+        // currently active.
+        app.activate();
     }
 
     /// Register for the cadence-changing events that have notifications.

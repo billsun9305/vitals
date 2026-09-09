@@ -25,7 +25,15 @@ objc2-app-kit = { workspace = true, features = [
   "NSStatusBar", "NSStatusItem", "NSStatusBarButton", "NSButton", "NSControl",
   "NSResponder", "NSView", "NSMenu", "NSMenuItem", "NSApplication", "NSFont",
   "NSColor", "NSWorkspace", "NSGraphics", "NSBezierPath", "NSGraphicsContext",
+  "NSWindow", "NSScreen",
 ] }
+# Full default features (the crate's own huge DOM/legacy-WebKit surface
+# included): these are extern declarations resolved against the system's
+# WebKit.framework at load time, not code we compile in, so unlike the
+# NS*-feature lists above there is no size/idle-cost reason to hand-pick a
+# subset — see objc2-app-kit and objc2-foundation above, which take the same
+# shortcut for the same reason.
+objc2-web-kit.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
