@@ -4,6 +4,12 @@ The design's sequencing rule: ship the text-only tray and prove the budget
 holds *before* adding custom drawing. If a later change regresses this, the
 regression is attributable to that change rather than to everything at once.
 
+> **These are the Task 16 figures, kept as the point-in-time baseline they
+> were taken as. The binary size below is superseded — Task 19 later embedded
+> the dashboard into the executable. For the finished product's numbers see
+> [Final figures](#final-figures-after-the-dashboard-was-embedded) at the
+> bottom of this file.**
+
 **Machine:** Apple M1 Pro (MacBookPro18,3), macOS 26.5
 **Measured:** 2026-09-08, release build (`lto = "fat"`, `opt-level = "s"`,
 `strip = true`), menu closed and display awake unless stated otherwise.
@@ -75,6 +81,9 @@ of CPU in ~40 seconds, about a third the per-second rate of the awake tray.
 proceed. If it regresses any row, this file is the baseline to diff against.
 
 ## Task 17 re-measurement: the custom-drawn panel
+
+> Also a point-in-time reading, taken before the dashboard was embedded. Its
+> binary-size row is superseded by [Final figures](#final-figures-after-the-dashboard-was-embedded).
 
 Same machine and method as above, release build, menu **closed** for the
 entire run (the panel view exists but is never mounted on screen, since it is

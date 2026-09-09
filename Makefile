@@ -52,6 +52,14 @@ bundle: build
 # output, if that was used first -- both ultimately point at the same
 # vitals binary, just reached through different paths).
 install-app: bundle
+# Create both destination directories first, so a machine missing either one
+# fails here rather than half-way through. Neither is guaranteed to exist:
+# ~/Library/LaunchAgents is absent until a user installs their first agent,
+# and /usr/local/bin is absent on a clean macOS install. Without this the
+# target could copy the app and load the agent and only then fail on the
+# symlink, leaving a partial install that `uninstall-app` is not obviously
+# the fix for.
+	install -d ~/Library/LaunchAgents "$(PREFIX)/bin"
 	rm -rf /Applications/Vitals.app
 	cp -R dist/Vitals.app /Applications/
 	cp resources/com.billsun.vitals.plist ~/Library/LaunchAgents/
