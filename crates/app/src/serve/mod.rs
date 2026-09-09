@@ -112,14 +112,61 @@ fn host_is_local(request: &tiny_http::Request) -> bool {
         .iter()
         .find(|h| h.field.equiv("Host"))
         .map(|h| h.value.as_str().to_string());
+
+    host_is_loopback(host.as_deref())
+}
+
+/// The decision `host_is_local` makes, over the header value alone.
+///
+/// Split out because a `tiny_http::Request` cannot be constructed in a unit
+/// test, and this is the part worth pinning: every case below is a shape a
+/// rebinding attack or a real client actually sends.
+fn host_is_loopback(host: Option<&str>) -> bool {
     match host {
         // A missing Host is HTTP/1.0 or a hand-rolled client, not a browser.
         None => true,
-        Some(h) => {
-            let name = h.rsplit_once(':').map_or(h.as_str(), |(n, _)| n);
-            let name = name.trim_start_matches('[').trim_end_matches(']');
-            name.eq_ignore_ascii_case("localhost") || name == "127.0.0.1" || name == "::1"
-        }
+        Some(h) => match strip_port(h) {
+            None => false,
+            Some(name) => {
+                // A trailing dot is the legal fully-qualified form of the
+                // same name.
+                let name = name.strip_suffix('.').unwrap_or(name);
+                name.eq_ignore_ascii_case("localhost") || name == "127.0.0.1" || name == "::1"
+            }
+        },
+    }
+}
+
+/// Host header minus its port, handling bracketed IPv6.
+///
+/// Splitting on the last `:` is wrong for `[::1]`, which contains colons of
+/// its own: it yielded `[:` and refused a legitimate local client. Brackets
+/// delimit the address, so read to `]` when present; otherwise only treat a
+/// trailing `:digits` as a port, so a hostname containing a stray colon is
+/// not silently truncated into something that might compare equal.
+fn strip_port(host: &str) -> Option<&str> {
+    if let Some(rest) = host.strip_prefix('[') {
+        // `[addr]` or `[addr]:port` and nothing else. Reading to the first
+        // `]` and discarding the tail would admit `[::1].evil.com`, whose
+        // literal prefix is attacker-chosen; the tail has to be checked.
+        let (addr, tail) = rest.split_once(']')?;
+        return is_port(tail).then_some(addr);
+    }
+    match host.rsplit_once(':') {
+        // Only a trailing `:digits` is a port. A hostname carrying some other
+        // colon is left whole rather than truncated into something that might
+        // compare equal to a local name.
+        Some((name, port)) if is_port(&format!(":{port}")) => Some(name),
+        Some(_) => None,
+        None => Some(host),
+    }
+}
+
+/// Empty, or `:` followed by at least one digit and nothing else.
+fn is_port(tail: &str) -> bool {
+    match tail.strip_prefix(':') {
+        None => tail.is_empty(),
+        Some(digits) => !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()),
     }
 }
 
@@ -286,5 +333,54 @@ mod tests {
         let v: serde_json::Value =
             serde_json::from_str(&body).expect("error body must be valid JSON");
         assert_eq!(v["error"], r#"bad path: "..\weird""#);
+    }
+
+    #[test]
+    fn only_loopback_names_are_accepted() {
+        // Left column is the Host header verbatim; right is whether the
+        // request is served. The refusals are the rebinding shapes: a name
+        // the attacker controls that merely contains, extends or prefixes a
+        // loopback name. Each was checked against a running server.
+        let cases = [
+            // real local clients
+            ("localhost", true),
+            ("localhost:8830", true),
+            ("LOCALHOST:8830", true),
+            ("127.0.0.1", true),
+            ("127.0.0.1:8830", true),
+            ("[::1]", true),
+            ("[::1]:8830", true),
+            // a trailing dot is the same name, fully qualified
+            ("localhost.", true),
+            ("localhost.:9", true),
+            // rebinding
+            ("evil.com", false),
+            ("evil.com:8830", false),
+            ("localhost.evil.com", false),
+            ("localhost.evil.com.", false),
+            ("127.0.0.1.evil.com", false),
+            ("xlocalhost", false),
+            ("localhosts", false),
+            // a bracketed literal must END at the bracket, or the tail is
+            // the attacker's: reading to the first `]` admitted this one
+            ("[::1].evil.com", false),
+            ("[::1]x", false),
+            ("[::1]:80x", false),
+            ("[::1", false),
+            // a colon that is not a port must not truncate the name
+            ("localhost:evil", false),
+            // IPv6 without brackets is malformed; no real client sends it
+            ("::1", false),
+        ];
+        for (host, want) in cases {
+            assert_eq!(
+                host_is_loopback(Some(host)),
+                want,
+                "Host: {host:?} should {} be served",
+                if want { "" } else { "not" }
+            );
+        }
+        // HTTP/1.0 and hand-rolled clients send no Host at all.
+        assert!(host_is_loopback(None));
     }
 }
