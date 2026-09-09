@@ -185,9 +185,28 @@ pub fn exit_code_for(state: Severity) -> i32 {
 pub fn collect_pressure(interval_ms: u32) -> Result<Verdict, String> {
     let procs_thread = std::thread::spawn(collect);
     let snap = collect_snapshot(interval_ms)?;
-    let rows = procs_thread
+    let mut rows = procs_thread
         .join()
         .map_err(|_| "process collector panicked".to_string())?;
+
+    // Never let this process be the answer to "what is slowing my Mac down".
+    // Its CPU figure here is an artifact of the measurement: sampling
+    // IOReport and walking the process table is the busiest this process
+    // ever gets, and it happens inside the very window `sysinfo` measures,
+    // so it reliably ranks itself at the top. Measured before this line
+    // existed: 8 of 8 consecutive runs reported `vitals (highest CPU 77%)`
+    // while the real load was ChatGPT and Chrome, and the summary sentence
+    // -- the one docs/agents.md tells agents to quote verbatim -- read
+    // "vitals is the likely cause."
+    //
+    // Filtering here rather than inside `pressure::evaluate` is deliberate:
+    // `evaluate` receives only the single top row per dimension, so dropping
+    // it there would leave no suspect at all instead of promoting the real
+    // one. `top` is left alone on purpose -- it is a raw ranking, and during
+    // a `vitals top` run this process genuinely is using that CPU.
+    let me = std::process::id();
+    rows.retain(|r| r.pid != me);
+
     let (by_cpu, by_mem) = rank(rows, 1);
 
     let now_s = history::unix_now_s();
@@ -299,5 +318,54 @@ pub fn run_watch(interval_s: u64, count: u64) -> Result<(), String> {
         if count != 0 && emitted >= count {
             return Ok(());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The monitoring process must never be named as the cause of the load
+    /// it is reporting.
+    ///
+    /// This has to be an in-process test: the point is that
+    /// `std::process::id()` is the same process `collect()` is measuring.
+    /// Driving the binary as a subprocess would compare a pid the test does
+    /// not know against a table it cannot see.
+    ///
+    /// The busy threads matter. Without them this process idles, never ranks
+    /// top, and the assertion holds no matter what `collect_pressure` does --
+    /// a test that passes for the wrong reason. Saturating every core makes
+    /// this process the top CPU consumer for the duration of the sampling
+    /// window, which is exactly the condition that produced
+    /// "vitals is the likely cause" in 8 of 8 runs before the filter existed.
+    #[test]
+    fn the_measuring_process_is_never_its_own_suspect() {
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut burners = Vec::new();
+        for _ in 0..std::thread::available_parallelism().map_or(4, |n| n.get()) {
+            let stop = std::sync::Arc::clone(&stop);
+            burners.push(std::thread::spawn(move || {
+                let mut x = 0u64;
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    x = x.wrapping_mul(6364136223846793005).wrapping_add(1);
+                }
+                x
+            }));
+        }
+
+        let verdict = collect_pressure(DEFAULT_INTERVAL_MS).expect("pressure should evaluate");
+
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        for b in burners {
+            let _ = b.join();
+        }
+
+        let me = std::process::id();
+        assert!(
+            !verdict.suspects.iter().any(|s| s.pid == me),
+            "the measuring process (pid {me}) named itself a suspect: {:?}",
+            verdict.suspects
+        );
     }
 }

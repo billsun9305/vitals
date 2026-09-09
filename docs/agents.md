@@ -41,6 +41,13 @@ Notes that prevent misreads:
   -1`, a log tail, a streaming parser — sees each sample as soon as it is
   written and the process exits cleanly (status 0) when the reader closes
   the pipe.
+- `top` lists **every** process including `vitals` itself, and the figure it
+  reports for itself is inflated: enumerating the process table is the
+  busiest this tool ever gets, and it happens inside the very window it is
+  measuring, so a `vitals top` run can show `vitals` near the top at tens of
+  percent. It idles at 0.167% (see `docs/budget.md`). Ignore that row. The
+  `pressure` verdict already does — it filters the measuring process out of
+  its suspects, so `summary` never blames the tool for the load.
 - `top`'s `sample_ms` is `200` by default — the window `sysinfo` measures
   per-process CPU delta over. It is not configurable per invocation today.
 
