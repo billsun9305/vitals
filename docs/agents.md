@@ -100,7 +100,12 @@ Three things to know:
 - The server refuses any request whose `Host` header is not loopback,
   returning 403. That is deliberate — it blocks a web page from reaching your
   process table by DNS rebinding — so send `Host: localhost` or
-  `Host: 127.0.0.1`, which is what any normal client does anyway.
+  `Host: 127.0.0.1`, which is what any normal client does anyway. Accepted:
+  those two, `[::1]`, any of them with a `:port` suffix, a trailing dot
+  (`localhost.`), and any letter case. Refused: everything else, including a
+  name that merely *contains* one of them (`localhost.evil.com`) and any
+  request carrying two `Host` headers. Sending no `Host` at all is allowed,
+  since HTTP/1.0 clients do not send one and a browser always does.
 
 Unlike the CLI, `/api/pressure` does not write the trend baseline. A polling
 client should not keep resetting the window the swap-growth rules measure
