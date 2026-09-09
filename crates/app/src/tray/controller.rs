@@ -28,8 +28,9 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadOnly};
 use objc2_app_kit::{
-    NSApplication, NSFont, NSMenu, NSMenuDelegate, NSMenuItem, NSStatusBar, NSStatusItem,
-    NSWorkspace, NSWorkspaceScreensDidSleepNotification, NSWorkspaceScreensDidWakeNotification,
+    NSAlert, NSApplication, NSApplicationDelegate, NSFont, NSMenu, NSMenuDelegate, NSMenuItem,
+    NSStatusBar, NSStatusItem, NSWorkspace, NSWorkspaceScreensDidSleepNotification,
+    NSWorkspaceScreensDidWakeNotification,
 };
 use objc2_foundation::{
     MainThreadMarker, NSNotification, NSNotificationCenter,
@@ -128,6 +129,11 @@ define_class!(
             }
         }
 
+        #[unsafe(method(openDashboard:))]
+        fn open_dashboard(&self, _sender: *mut AnyObject) {
+            self.show_dashboard();
+        }
+
         #[unsafe(method(quit:))]
         fn quit(&self, _sender: *mut AnyObject) {
             NSApplication::sharedApplication(MainThreadMarker::from(self)).terminate(None);
@@ -175,6 +181,21 @@ define_class!(
     }
 
     unsafe impl NSObjectProtocol for Controller {}
+
+    unsafe impl NSApplicationDelegate for Controller {
+        /// Double-clicking Vitals.app while it is already running.
+        ///
+        /// An `LSUIElement` app has no window and no Dock icon, so the
+        /// second launch has nothing to bring forward and appears to do
+        /// nothing at all — which reads as a broken app rather than as a
+        /// running one. AppKit sends this instead; opening the dashboard is
+        /// the only visible thing this app can offer.
+        #[unsafe(method(applicationShouldHandleReopen:hasVisibleWindows:))]
+        fn should_handle_reopen(&self, _app: &NSApplication, _has_windows: bool) -> bool {
+            self.show_dashboard();
+            true
+        }
+    }
 
     unsafe impl NSMenuDelegate for Controller {
         #[unsafe(method(menuWillOpen:))]
@@ -260,6 +281,17 @@ impl Controller {
         let this = Self::alloc(mtm).set_ivars(ivars);
         let this: Retained<Self> = unsafe { msg_send![super(this), init] };
 
+        let dashboard = NSMenuItem::new(mtm);
+        dashboard.setTitle(&NSString::from_str("Open Dashboard"));
+        dashboard.setKeyEquivalent(&NSString::from_str("d"));
+        dashboard.setEnabled(true);
+        // SAFETY: `this` responds to `openDashboard:`, defined above.
+        unsafe {
+            dashboard.setTarget(Some(&this));
+            dashboard.setAction(Some(sel!(openDashboard:)));
+        }
+        menu.addItem(&dashboard);
+
         let quit = NSMenuItem::new(mtm);
         quit.setTitle(&NSString::from_str("Quit vitals"));
         quit.setKeyEquivalent(&NSString::from_str("q"));
@@ -277,6 +309,30 @@ impl Controller {
         this.observe_notifications();
         this.sync_timer();
         this
+    }
+
+    /// Start the dashboard if it is not up, then open it in a browser.
+    ///
+    /// Runs on the main thread, and deliberately splits at the slow part.
+    /// `ensure_running` is loopback-only and measured at ~4ms cold (starting
+    /// a server) and ~0.5ms warm (one already up), so it can block the main
+    /// thread — and its failure needs an alert, which must be on the main
+    /// thread anyway. `open_in_browser` cannot: it waits on the `open`
+    /// process, which is long enough to stutter the menu closing. Only that
+    /// goes to a thread.
+    fn show_dashboard(&self) {
+        let mtm = MainThreadMarker::from(self);
+        match crate::serve::ensure_running(crate::serve::DEFAULT_PORT) {
+            Ok(addr) => {
+                std::thread::spawn(move || crate::serve::open_in_browser(&addr));
+            }
+            Err(e) => {
+                let alert = NSAlert::new(mtm);
+                alert.setMessageText(&NSString::from_str("Cannot open the dashboard"));
+                alert.setInformativeText(&NSString::from_str(&e));
+                alert.runModal();
+            }
+        }
     }
 
     /// Register for the cadence-changing events that have notifications.

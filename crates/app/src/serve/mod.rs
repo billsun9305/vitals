@@ -186,6 +186,64 @@ struct Cache {
 /// verb's help text promises to handle ("start the server if needed"). Probe
 /// the port first; if something is already serving, just point the browser at
 /// it and return.
+/// The port every face of the dashboard agrees on.
+///
+/// The CLI's `serve` and `dashboard` flags and the tray's menu item all read
+/// this. It was a bare `9876` in three places, which is three chances to
+/// change one and not the others.
+pub const DEFAULT_PORT: u16 = 9876;
+
+/// Guarantee a vitals dashboard is answering on `port`, starting one inside
+/// this process if the port is free.
+///
+/// This is what the tray's "Open Dashboard" item calls. The tray is a
+/// long-lived process that already owns a sampler, so a server started here
+/// lives and dies with the menu bar item rather than being orphaned as a
+/// child process — quitting vitals takes the dashboard with it.
+///
+/// Returns the address to point a browser at.
+pub fn ensure_running(port: u16) -> Result<String, String> {
+    let addr = format!("127.0.0.1:{port}");
+    let sock: std::net::SocketAddr = addr
+        .parse()
+        .map_err(|e| format!("bad address {addr}: {e}"))?;
+    match probe(&sock) {
+        Probe::Vitals => return Ok(addr),
+        Probe::Stranger => {
+            return Err(format!(
+                "Port {port} is already in use by another program, so the \
+                 dashboard cannot start. Quit whatever is using it, or run \
+                 `vitals serve --port <other>` from a terminal."
+            ))
+        }
+        Probe::Free => {}
+    }
+
+    std::thread::spawn(move || {
+        // A bind failure here is reported by the readiness loop below timing
+        // out, which is the message the user can act on; the raw error would
+        // arrive on a thread with nowhere to show it.
+        let _ = run(port, false);
+    });
+
+    // `run` binds within milliseconds of this thread starting, and answers
+    // 503-with-a-schema-version before its first sample lands, so readiness
+    // does not wait on the sampler. The generous ceiling is for a machine
+    // under the kind of load this app exists to diagnose.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if probe(&sock) == Probe::Vitals {
+            return Ok(addr);
+        }
+        // A failed probe against an unbound port is a refused connect on
+        // loopback — microseconds — so polling tightly here costs nothing
+        // and is the difference between a ~10ms and a ~31ms main-thread
+        // block for the tray's menu item.
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    Err(format!("the dashboard did not come up on port {port}"))
+}
+
 pub fn run_dashboard(port: u16) -> Result<(), String> {
     let addr = format!("127.0.0.1:{port}");
     let sock = addr
@@ -254,7 +312,7 @@ fn probe(addr: &std::net::SocketAddr) -> Probe {
     }
 }
 
-fn open_in_browser(addr: &str) {
+pub(crate) fn open_in_browser(addr: &str) {
     let _ = std::process::Command::new("open")
         .arg(format!("http://{addr}"))
         .status();
@@ -479,6 +537,48 @@ mod tests {
         // the URL the user trusts as their dashboard.
         let addr = one_shot_listener(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello");
         assert_eq!(probe(&addr), Probe::Stranger);
+    }
+
+    #[test]
+    fn ensure_running_starts_a_server_and_returns_fast() {
+        // The tray calls this on the AppKit main thread, so how long it
+        // blocks is a UI property, not just a performance one: anything
+        // approaching a frame budget shows up as the menu stuttering shut.
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .expect("bind")
+            .local_addr()
+            .expect("addr")
+            .port();
+
+        let started = std::time::Instant::now();
+        let addr = ensure_running(port).expect("a free port must yield a server");
+        let took = started.elapsed();
+        assert_eq!(addr, format!("127.0.0.1:{port}"));
+
+        // Measured at ~4ms; 100ms is loose enough not to flake on a loaded
+        // machine and tight enough to catch the readiness loop regressing
+        // back into a coarse sleep.
+        assert!(
+            took < std::time::Duration::from_millis(100),
+            "ensure_running blocked the main thread for {took:?}"
+        );
+
+        // Idempotent: a second call finds the server already up and must not
+        // start another or fail on the bind.
+        let again = ensure_running(port).expect("second call must reuse the running server");
+        assert_eq!(again, addr);
+    }
+
+    #[test]
+    fn ensure_running_refuses_a_port_held_by_something_else() {
+        // The failure the user can actually hit, and the one that has to
+        // produce a message rather than a silent no-op.
+        let addr = one_shot_listener(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello");
+        let err = ensure_running(addr.port()).expect_err("a stranger must not be served");
+        assert!(
+            err.contains("already in use"),
+            "the message must say what is wrong: {err}"
+        );
     }
 
     #[test]

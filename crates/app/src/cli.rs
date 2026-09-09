@@ -81,7 +81,7 @@ pub enum Command {
     },
     /// Serve the JSON API and the dashboard on localhost.
     Serve {
-        #[arg(long, default_value_t = 9876)]
+        #[arg(long, default_value_t = crate::serve::DEFAULT_PORT)]
         port: u16,
         /// Do not open a browser window.
         #[arg(long)]
@@ -89,7 +89,7 @@ pub enum Command {
     },
     /// Start the server if needed and open the dashboard.
     Dashboard {
-        #[arg(long, default_value_t = 9876)]
+        #[arg(long, default_value_t = crate::serve::DEFAULT_PORT)]
         port: u16,
     },
 }

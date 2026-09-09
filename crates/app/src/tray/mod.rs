@@ -11,6 +11,7 @@ mod controller;
 mod panel;
 pub mod status_item;
 
+use objc2::runtime::ProtocolObject;
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 use objc2_foundation::MainThreadMarker;
 
@@ -22,7 +23,10 @@ pub fn run() -> ! {
     app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
     // Held for the lifetime of the run loop: the status item, the menu
     // delegate and the notification centre all reference it unretained.
-    let _controller = controller::Controller::new(mtm);
+    let controller = controller::Controller::new(mtm);
+    // The delegate is what receives the Finder double-click of an already
+    // running LSUIElement app; without it that click is silently swallowed.
+    app.setDelegate(Some(ProtocolObject::from_ref(&*controller)));
     app.run();
     unreachable!("NSApplication::run does not return")
 }

@@ -325,6 +325,22 @@ sparkline) — no continuous graph redraw while the dropdown is closed, and
 the sampling cadence backs off automatically while the display sleeps.
 See `docs/budget.md` for the measured idle cost.
 
+**It has no window.** `LSUIElement` means no Dock icon and no app-switcher
+entry, so there is nothing for a click to bring forward — the app *is* the
+menu bar item, at the top-right of the screen. Two things reach the web
+dashboard from it:
+
+- **Open Dashboard** in the dropdown (⌘D).
+- **Double-clicking `Vitals.app`** in Finder while it is already running.
+  Without a window this would otherwise be a silent no-op, which reads as a
+  broken app; AppKit sends `applicationShouldHandleReopen:` instead and the
+  tray answers it by opening the dashboard.
+
+Either way the server runs **inside the tray process**, not as a child, so
+quitting vitals takes the dashboard down with it and nothing is left
+orphaned. It is started on demand: a tray that has never been asked for the
+dashboard has no listener and no second sampler.
+
 `make install-app` packages this into `dist/Vitals.app`
 (`scripts/bundle.sh` plus `resources/Info.plist`, which sets
 `LSUIElement` so the app never shows a Dock icon or an app-switcher

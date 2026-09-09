@@ -216,3 +216,33 @@ expensive exactly when the machine is already struggling, which is exactly
 when someone is looking at it. Every other figure in this file was taken on a
 relatively quiet machine and should be read as a floor rather than a
 guarantee.
+
+## The tray can now host the dashboard, and that changes what "idle" means
+
+The tray's "Open Dashboard" item (and the Finder-reopen handler behind a
+double-click) starts `serve::run` on a thread **inside the tray process**
+rather than spawning a child. That keeps the lifetime honest — quitting
+vitals takes the dashboard with it — but it means the tray process has two
+states worth measuring, not one.
+
+| State | Measured |
+|---|---|
+| Never asked for the dashboard: no listener, one sampler | **0.200%** — 0.24s over 120s |
+| Dashboard open in Chrome, polling at 1 Hz / 5 s | **3.68%** — 2.21s over 60s |
+
+Both taken on the same build at load average 37-69, which is why the idle
+figure sits above the 0.183% quiet-machine baseline and below the 0.267%
+measured at load 55-84 — it is the same load-dependence documented above,
+not a regression from this feature.
+
+Two things the first row is deliberately making a claim about. The listener
+count is zero until someone asks, so the on-demand path really is on-demand:
+a tray that is only ever a tray pays nothing for the dashboard's existence.
+And thread count returns to 5, the same as before this feature — an
+8-thread reading taken in the first 60 seconds after launch is the startup
+transient, not the steady state, the same way the very first CPU window is.
+
+The second row is not a regression either: it is the cost of an open
+dashboard, which [The server, honestly](#the-server-honestly) already prices
+at ~3.1% for a standalone `vitals serve` under load. Folding the server into
+the tray did not make it cheaper or dearer; it moved where it lives.
