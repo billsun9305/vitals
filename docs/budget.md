@@ -140,3 +140,22 @@ bounded by how long a user holds the menu open, but it is the number to watch
 if the panel ever gains animation: at 1 Hz the drawing is nearly free next to
 the sampling, and that stops being true if redraws are decoupled from
 samples.
+
+## Final figures, after the dashboard was embedded
+
+The numbers above were taken before Task 19 embedded the built React
+dashboard into the binary via `include_dir!`, so the 0.87 MB binary figure
+is superseded. Re-measured on the finished product, same machine and method:
+
+| Target | Task 16 | Final | |
+|---|---|---|---|
+| Idle CPU < 0.3% | 0.167% | **0.183%** — 0.11s over 60s | pass |
+| Memory < 25 MB | 15.9 MB | **17.2 MB** physical footprint | pass |
+| Binary < 6 MB | 0.87 MB | **1.07 MB** (1,125,168 bytes) | pass |
+
+The binary grew by ~200 KB, which is the gzip-era cost of carrying the whole
+dashboard — HTML, CSS and a 196 KB JS bundle — inside the executable so that
+`vitals serve` has no runtime dependency on a build directory. Still a sixth
+of the ceiling. Idle CPU and footprint moved within noise; neither the
+dashboard's assets nor the panel cost anything while nothing is looking at
+them, which is the property the whole design is built around.
