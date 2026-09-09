@@ -92,7 +92,14 @@ export default function App() {
         </div>
         <div className="badges">
           <span className={`badge badge--${snap.thermal_state}`}>{snap.thermal_state}</span>
-          <span className={`badge badge--${snap.mem_pressure}`}>{snap.mem_pressure} pressure</span>
+          {/* "memory" is load-bearing. This badge is the kernel's memory
+              pressure level; the verdict below is the overall health state.
+              Labelled just "pressure" they read as a contradiction on screen
+              -- a "normal pressure" badge sat directly above "Pressure:
+              critical" while swap was 95% full and load was 4.6x cores. */}
+          <span className={`badge badge--${snap.mem_pressure}`}>
+            memory pressure: {snap.mem_pressure}
+          </span>
         </div>
       </header>
       <p className="muted timestamp">
@@ -166,7 +173,7 @@ export default function App() {
 
       {pressure && (
         <section className={`pressure pressure--${pressure.state}`}>
-          <h2>Pressure: {pressure.state}</h2>
+          <h2>Overall: {pressure.state}</h2>
           <p>{pressure.summary}</p>
           {pressure.reasons.length > 0 && (
             <ul className="reasons">
