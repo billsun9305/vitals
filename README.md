@@ -6,11 +6,20 @@ no `sudo`, no subprocess of any kind — and prints structured JSON an agent
 (or a script, or you) can consume directly.
 
 Today `vitals` is a CLI with four verbs: `snapshot`, `top`, `pressure`,
-`watch`. A menu bar item is planned (see [below](#the-menu-bar-app-planned))
-but does not exist yet — everything on this page is documenting what is
-actually built and runnable right now.
+`watch` (plus `serve`/`dashboard`, a local web dashboard — see
+`vitals --help`). The same binary, run with no arguments, is also a menu
+bar tray item; see [below](#the-menu-bar-app) for what it does and how to
+install it as a login item.
 
 ## Install
+
+Two independent ways to install, depending on what you want: the CLI on
+its own, or the menu bar app with autostart. Both end with a `vitals` on
+`PATH`, and it's fine to use either first — `make install-app` simply
+repoints the same symlink at the app bundle's copy of the binary instead
+of the raw build output.
+
+### CLI only
 
 ```bash
 make build    # cargo build --release -> target/release/vitals
@@ -23,6 +32,38 @@ if you'd rather not use sudo. `make uninstall` removes the symlink.
 
 Once installed, `vitals` is on `PATH` and every command below works from
 anywhere.
+
+### Menu bar app, with autostart
+
+```bash
+make install-app  # builds, bundles, copies to /Applications, registers the
+                   # LaunchAgent, and symlinks $PREFIX/bin/vitals to it
+```
+
+This copies `dist/Vitals.app` to `/Applications/Vitals.app`, installs
+`resources/com.billsun.vitals.plist` into `~/Library/LaunchAgents/` so the
+tray starts at every login, and (re)creates the `$PREFIX/bin/vitals`
+symlink, now pointing at `/Applications/Vitals.app/Contents/MacOS/vitals`.
+`make uninstall-app` reverses all of it (`launchctl unload`, remove the
+LaunchAgent, remove `/Applications/Vitals.app`, remove the symlink).
+
+`make install-app` needs `sudo` under the same condition as plain
+`make install` (write access to `$PREFIX/bin`), plus write access to
+`/Applications` and `~/Library/LaunchAgents`, which do not need `sudo`.
+
+**The app is ad-hoc signed, not notarized.** `scripts/bundle.sh` runs
+`codesign --sign -`, which satisfies `codesign --verify` and lets the
+binary run, but it is not a real Developer ID signature — there's no team
+identity behind it, and it will never pass notarization
+(`spctl -a --type execute` on the built bundle reports it as rejected).
+Launching it via `launchctl`/the LaunchAgent execs the binary directly and
+is unaffected by this. But if you ever double-click `Vitals.app` in
+Finder (or otherwise open it through Launch Services) and macOS calls it
+"unidentified" and refuses to open it, right-click → Open once to trust
+it, or approve it under System Settings → Privacy & Security. This is
+expected and permanent for a locally-built, non-distributed app — it is
+not a bug in the bundle, and it is why the release note below does not
+claim notarization.
 
 ## The four verbs
 
@@ -276,15 +317,43 @@ are screen-scraping a GUI or shelling out to `powermetrics` yourself
 JSON on stdout, zero privilege escalation, meant to be called
 programmatically rather than glanced at.
 
-## The menu bar app (planned)
+## The menu bar app
 
-`vitals` with no arguments today prints a message and exits — the menu
-bar item is designed (see the project plan under
-`docs/superpowers/plans/`) but not yet built; it's being developed in a
-parallel worktree. When it lands it will be a near-free `NSStatusItem`
-showing live text (no continuous graph redraw), launched via `launchd`,
-symlinked into the same `vitals` binary this README documents. Nothing
-above describes it — everything above is the CLI as it exists today.
+`vitals` run with no arguments is a menu bar tray: an `NSStatusItem`
+showing live text plus a custom-drawn dropdown (per-core bars, a CPU
+sparkline) — no continuous graph redraw while the dropdown is closed, and
+the sampling cadence backs off automatically while the display sleeps.
+See `docs/budget.md` for the measured idle cost.
+
+`make install-app` packages this into `dist/Vitals.app`
+(`scripts/bundle.sh` plus `resources/Info.plist`, which sets
+`LSUIElement` so the app never shows a Dock icon or an app-switcher
+entry), installs it to `/Applications`, and registers
+`resources/com.billsun.vitals.plist` as a per-user LaunchAgent so the
+tray starts at every login — see [Install](#install) above for the exact
+targets. `make uninstall-app` removes all of it: the LaunchAgent (after
+`launchctl unload`), `/Applications/Vitals.app`, and the `$PREFIX/bin/vitals`
+symlink.
+
+A LaunchAgent rather than `SMAppService`: no entitlements to declare, the
+plist is trivially inspectable (`plutil -lint`,
+`cat ~/Library/LaunchAgents/com.billsun.vitals.plist`), and
+`launchctl unload`/`load` round-trips cleanly while debugging, versus
+`SMAppService`'s more opaque registration.
+
+### Releasing a new version
+
+Not automated by this repo, and not run as part of building or installing
+it — recorded here for whoever cuts the next tag:
+
+```bash
+git tag v0.1.0
+git push --follow-tags
+```
+
+Bump `CFBundleShortVersionString` in `resources/Info.plist` and
+`workspace.package.version` in `Cargo.toml` together before tagging; they
+are not currently derived from each other.
 
 ## Development
 
