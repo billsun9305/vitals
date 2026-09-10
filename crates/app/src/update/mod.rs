@@ -10,4 +10,5 @@
 
 pub mod codesign;
 pub mod http;
+pub mod install;
 pub mod release;
