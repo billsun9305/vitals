@@ -27,9 +27,28 @@ pub fn run(parent: u32, app: &Path) -> Result<(), String> {
     launch(app)
 }
 
+/// Whether `path` looks enough like an app bundle to hand to LaunchServices.
+///
+/// LaunchServices shows a modal Finder dialog ("The application can't be
+/// opened.") when asked to open a path that is not an application, and
+/// blocks its completion handler until that dialog is dismissed. This
+/// helper is a hidden process with no window and no user watching for a
+/// dialog to answer, so it must rule out anything that is not a bundle
+/// itself, before LaunchServices ever sees the path. This is not a proof
+/// the bundle is well-formed or executable — only enough to catch a plain
+/// file or folder.
+fn is_app_bundle(path: &Path) -> bool {
+    path.is_dir()
+        && path.extension().is_some_and(|ext| ext == "app")
+        && path.join("Contents").join("MacOS").is_dir()
+}
+
 fn launch(app: &Path) -> Result<(), String> {
     if !app.exists() {
         return Err(format!("{} does not exist", app.display()));
+    }
+    if !is_app_bundle(app) {
+        return Err(format!("{} is not an app bundle", app.display()));
     }
     let url = NSURL::fileURLWithPath(&NSString::from_str(&app.to_string_lossy()));
     let config = NSWorkspaceOpenConfiguration::configuration();
@@ -78,5 +97,29 @@ fn launch(app: &Path) -> Result<(), String> {
             ));
         }
         NSRunLoop::mainRunLoop().runUntilDate(&NSDate::dateWithTimeIntervalSinceNow(0.1));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_app_bundle;
+
+    #[test]
+    fn a_dot_app_directory_with_contents_macos_is_a_bundle() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = dir.path().join("Foo.app");
+        std::fs::create_dir_all(app.join("Contents").join("MacOS")).unwrap();
+
+        assert!(is_app_bundle(&app));
+    }
+
+    #[test]
+    fn a_plain_directory_or_an_incomplete_bundle_is_not_a_bundle() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!is_app_bundle(dir.path()));
+
+        let app = dir.path().join("Foo.app");
+        std::fs::create_dir_all(&app).unwrap(); // no Contents/MacOS
+        assert!(!is_app_bundle(&app));
     }
 }

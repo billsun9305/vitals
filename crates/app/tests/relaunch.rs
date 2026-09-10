@@ -1,8 +1,11 @@
-//! The relaunch helper as a subprocess. Neither test launches anything:
-//! one names a bundle that does not exist, the other a directory that is
-//! not an app, so LaunchServices answers with an error both times. The
-//! second is the only automated proof that the completion handler fires
-//! in a process that never runs `NSApplication`.
+//! The relaunch helper as a subprocess. Neither test that names a real path
+//! ever reaches LaunchServices: one names a bundle that does not exist, so
+//! `launch` refuses it before any `is_app_bundle` check runs; the other
+//! names a plain directory, which `is_app_bundle` refuses on its own,
+//! before LaunchServices would ever be asked to open it (LaunchServices
+//! answers a non-app path with a modal Finder dialog, which a hidden helper
+//! must never trigger, and which would leave the test waiting on a dialog
+//! no one is there to dismiss).
 
 use std::process::{Command, Stdio};
 use std::thread;
@@ -81,17 +84,20 @@ fn a_parent_that_is_already_gone_is_not_waited_for() {
 }
 
 #[test]
-fn a_path_that_is_not_an_app_is_refused_by_launch_services() {
+fn a_path_that_is_not_an_app_is_refused_before_launch_services() {
     let dir = tempfile::tempdir().unwrap();
     let mut parent = Command::new("sleep").arg("0.2").spawn().unwrap();
+    let started = Instant::now();
     let out = relaunch(parent.id(), &dir.path().to_string_lossy());
+    let took = started.elapsed();
     let _ = parent.wait();
 
     assert!(!out.status.success(), "opening a plain directory must fail");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.starts_with("vitals: "), "{stderr}");
+    assert!(stderr.contains("vitals: "), "{stderr}");
+    assert!(stderr.contains("is not an app bundle"), "{stderr}");
     assert!(
-        stderr.len() > "vitals: ".len(),
-        "LaunchServices' reason should be in the message: {stderr}"
+        took < Duration::from_secs(5),
+        "returned after {took:?} — it must not wait for any LaunchServices deadline"
     );
 }
