@@ -46,6 +46,24 @@ objc2-web-kit.workspace = true
 # build that method's signature, but constructing one ourselves needs it as
 # a direct dependency too.
 block2.workspace = true
+# The in-app updater (src/update): gzip + tar to unpack a release, SHA-256
+# to verify it before unpacking.
+flate2.workspace = true
+tar.workspace = true
+sha2.workspace = true
+# The Security framework, for two questions in update/codesign.rs: which
+# Team ID signed the running copy, and does a staged bundle satisfy that
+# team's designated requirement. Only the modules those two need.
+objc2-security = { workspace = true, features = [
+  "CSCommon", "SecCode", "SecStaticCode", "SecRequirement",
+] }
+# The CF types those Security calls take and return.
+objc2-core-foundation = { workspace = true, features = [
+  "CFBase", "CFString", "CFURL", "CFDictionary",
+] }
+# SMAppService, for Start at Login (tray/login_item.rs).
+objc2-service-management = { workspace = true, features = ["SMAppService"] }
 
 [dev-dependencies]
 serde_json.workspace = true
+tempfile.workspace = true
