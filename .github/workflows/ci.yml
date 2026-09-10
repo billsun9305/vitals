@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: fmt · clippy · test · bundle
+    # Apple Silicon only: the sampler reads IOReport, which exists nowhere
+    # else, and the tray is AppKit. GitHub's macos-15 runners are arm64.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      # The binary embeds dashboard/dist at compile time (`include_dir!`),
+      # so the page is built before anything in Rust is.
+      - name: Dashboard
+        working-directory: dashboard
+        run: |
+          npm ci
+          npm run lint
+          npm run build
+
+      # rust-toolchain.toml selects stable + the arm64 target; rustup honours it.
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --examples -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace
+
+      - name: Bundle
+        run: make bundle
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Vitals.app
+          path: dist/Vitals.app
+          if-no-files-found: error

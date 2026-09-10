@@ -246,3 +246,29 @@ The second row is not a regression either: it is the cost of an open
 dashboard, which [The server, honestly](#the-server-honestly) already prices
 at ~3.1% for a standalone `vitals serve` under load. Folding the server into
 the tray did not make it cheaper or dearer; it moved where it lives.
+
+## The dashboard window, and why it is a separate process
+
+The first native window (`WKWebView` inside the tray process) was measured
+on the installed build, `footprint -p` physical footprint, after opening
+the dashboard once and closing it with ⌘W:
+
+| | Before ever opening | Window open | After close |
+|---|---|---|---|
+| Tray process | 17 MB | 36 MB | **43 MB** |
+| `com.apple.WebKit.GPU` | — | 27 MB | **13 MB, still running** |
+| `com.apple.WebKit.Networking` | — | 7 MB | **6 MB, still running, three keep-alive sockets to :9876 still open** |
+| `com.apple.WebKit.WebContent` | — | 77 MB | exited |
+| Tray CPU | 0.2% | 3.6% | 0.1% |
+
+Tearing the `WKWebView` down on close (rather than navigating it to
+`about:blank`) did free the WebContent process, but nothing else: the
+Networking and GPU helpers are per-app singletons that no public API ends,
+and WebKit's UI-process side stays loaded in whichever process created a
+web view. Net: a tray that had shown the dashboard once carried ~62 MB
+more than one that never had, for the rest of its life. That is the one
+number this product exists to keep small, so the window moved out of the
+tray into a `vitals window` child process that LaunchServices launches
+and that exits when its window closes. Its measurements will be added
+here when it lands.
+

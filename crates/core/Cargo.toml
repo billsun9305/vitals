@@ -4,6 +4,12 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Apple Silicon sampling, JSON schema and pressure verdict behind the vitals CLI and menu bar app"
 
 [dependencies]
 macmon.workspace = true

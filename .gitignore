@@ -5,3 +5,5 @@
 *.app
 /.superpowers
 /.claude/
+.DS_Store
+*.log

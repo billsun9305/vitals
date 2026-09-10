@@ -1,0 +1,21 @@
+name: Feature request
+description: Something vitals should do.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you are trying to find out or do that vitals doesn't let you.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you'd like
+      description: If you have a shape in mind — a flag, a field, a panel section — describe it.
+  - type: textarea
+    id: cost
+    attributes:
+      label: Idle cost
+      description: vitals promises to do nothing while nobody is looking (see docs/budget.md). If the feature needs a timer, socket or thread while idle, say how it stays inside that promise.

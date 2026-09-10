@@ -1,0 +1,43 @@
+name: Bug report
+description: Something vitals does is wrong.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: snapshot
+    attributes:
+      label: "`vitals snapshot` output"
+      description: Paste it whole — it carries the chip, core layout and thermal state the bug happened under.
+      render: json
+  - type: input
+    id: version
+    attributes:
+      label: vitals version
+      placeholder: "`vitals --version`"
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and chip
+      placeholder: "`sw_vers -productVersion` and `sysctl -n machdep.cpu.brand_string`"
+    validations:
+      required: true
+  - type: dropdown
+    id: face
+    attributes:
+      label: Where
+      options:
+        - CLI
+        - Menu bar app
+        - Dashboard (window)
+        - Dashboard (browser / `vitals serve`)
+        - Install / LaunchAgent
+    validations:
+      required: true

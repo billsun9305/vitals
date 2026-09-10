@@ -1,0 +1,19 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      # The objc2 family is pinned to exact, mutually matching versions;
+      # bumping one without the others does not build.
+      objc2:
+        patterns: ["objc2*", "block2"]
+  - package-ecosystem: npm
+    directory: /dashboard
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

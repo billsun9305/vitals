@@ -7,7 +7,11 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.82"
 license = "MIT"
+authors = ["Bill Sun"]
 repository = "https://github.com/billsun9305/vitals"
+homepage = "https://github.com/billsun9305/vitals"
+keywords = ["macos", "apple-silicon", "monitoring", "menubar", "cli"]
+categories = ["command-line-utilities", "os::macos-apis"]
 
 [workspace.dependencies]
 vitals-core = { path = "crates/core" }

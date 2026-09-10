@@ -1,5 +1,9 @@
 # vitals
 
+[![CI](https://github.com/billsun9305/vitals/actions/workflows/ci.yml/badge.svg)](https://github.com/billsun9305/vitals/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Platform: Apple Silicon macOS 14+](https://img.shields.io/badge/platform-Apple%20Silicon%20%C2%B7%20macOS%2014%2B-lightgrey)
+
 Apple Silicon system monitor. The CLI is a single Rust binary that samples
 CPU, GPU, memory, power, and thermal state in-process — no `powermetrics`,
 no `sudo`, no subprocess of any kind — and prints structured JSON an agent
@@ -332,10 +336,9 @@ To look at the dropdown without opening a menu — for instance to check it in
 both themes, or its empty and error states — `cargo run --release --example
 render_panel -- /tmp/panel` paints the same `drawRect:` to PNG.
 
-**It has no window.** `LSUIElement` means no Dock icon and no app-switcher
-entry, so there is nothing for a click to bring forward — the app *is* the
-menu bar item, at the top-right of the screen. Two things reach the web
-dashboard from it:
+**It has no window until you ask for one.** `LSUIElement` means no Dock
+icon and no app-switcher entry, so the app *is* the menu bar item, at the
+top-right of the screen. Two things open the dashboard from it:
 
 - **Open Dashboard** in the dropdown (⌘D).
 - **Double-clicking `Vitals.app`** in Finder while it is already running.
@@ -343,10 +346,45 @@ dashboard from it:
   broken app; AppKit sends `applicationShouldHandleReopen:` instead and the
   tray answers it by opening the dashboard.
 
+The dashboard opens in a **native window** — a `WKWebView` inside an
+`NSWindow`, not a browser tab — 1000×760 the first time, then wherever you
+last left it. While it is open the app has a Dock tile and an app menu, so
+⌘W closes the window and ⌘Q quits; both go away again when the window
+closes, and closing tears the web view down rather than hiding it. What a
+closed window still costs is measured in `docs/budget.md`; moving the
+window into its own process is the next change. `vitals dashboard` from a
+terminal opens the same page in your default browser.
+
 Either way the server runs **inside the tray process**, not as a child, so
 quitting vitals takes the dashboard down with it and nothing is left
 orphaned. It is started on demand: a tray that has never been asked for the
 dashboard has no listener and no second sampler.
+
+### The dashboard
+
+One page, built to be read top-down:
+
+- **Verdict** first — the same call `vitals pressure` makes, as an icon,
+  a label, the one-line summary, the reasons, and the process it blames.
+- **Four tiles** — CPU, GPU, memory, power — each a headline figure, a
+  status dot, one line of context and a trend line.
+- **A 2 / 5 / 15-minute range control** that scopes everything below it.
+  The page keeps fifteen minutes of samples, so widening is instant.
+- **CPU and GPU over time**, with a crosshair and tooltip (arrow keys step
+  through samples once the chart has focus) and the current value labelled
+  at the line's end.
+- **One bar per core**, efficiency cores in one colour and performance
+  cores in another — the same two colours the dropdown uses — labelled
+  `E0 … P7` by position, with clock speed on hover.
+- **Memory and swap meters** whose fill colour follows the kernel's
+  pressure signal. Swap is drawn relative to physical memory, because
+  macOS grows the swap file on demand and its own size says little.
+- **Top processes** by CPU or by memory, with inline bars.
+
+Every chart has a **Chart / Table** toggle for the same data as a table.
+Polling stops whenever the page is hidden, and if the server goes away the
+last good render stays on screen, dimmed, until it is back. Light and dark
+follow the system.
 
 `make install-app` packages this into `dist/Vitals.app`
 (`scripts/bundle.sh` plus `resources/Info.plist`, which sets
@@ -389,3 +427,21 @@ make fmt     # cargo fmt --all
 
 `make lint` is clippy with `-D warnings` — it must be clean, not just
 free of hard errors.
+
+The dashboard is a Vite + React app in `dashboard/`. `npm run build` there
+writes `dashboard/dist`, which `cargo build` embeds into the binary via
+`include_dir!` — rebuild the binary after rebuilding the page. For
+iteration, `npm run dev` serves the source with hot reload and proxies
+`/api/*` to `127.0.0.1:9876`, so it works against any running `vitals
+serve`, including the one inside the tray. `npm run lint` is oxlint.
+
+## Contributing
+
+Bug reports, measurements and pull requests are welcome — see
+[CONTRIBUTING.md](CONTRIBUTING.md) for the loop, the layout, and the few
+rules that aren't style. Vulnerabilities go through
+[SECURITY.md](SECURITY.md), not the issue tracker.
+
+## License
+
+[MIT](LICENSE) © 2026 Bill Sun.
