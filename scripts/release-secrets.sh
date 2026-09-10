@@ -39,10 +39,19 @@ if ! security find-identity -v -p codesigning 2>/dev/null | grep -q "Developer I
   exit 1
 fi
 
-read -rp "Path to the exported certificate (.p12): " p12
+# The repository's git-ignored .secrets/ directory is where the two files
+# are kept between releases; each prompt defaults to the one file found
+# there, so a repeat run is four Returns and the .p12 password.
+secrets_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.secrets"
+default_p12="$(ls "$secrets_dir"/*.p12 2>/dev/null | head -1 || true)"
+default_p8="$(ls "$secrets_dir"/AuthKey_*.p8 2>/dev/null | head -1 || true)"
+
+read -rp "Path to the exported certificate (.p12) [${default_p12:-none}]: " p12
+p12="${p12:-$default_p12}"
 [ -f "$p12" ] || { echo "not a file: $p12" >&2; exit 1; }
 read -rsp "Password you gave the .p12 when exporting: " p12_password; echo
-read -rp "Path to the App Store Connect key (AuthKey_XXXXXXXXXX.p8): " p8
+read -rp "Path to the App Store Connect key (AuthKey_XXXXXXXXXX.p8) [${default_p8:-none}]: " p8
+p8="${p8:-$default_p8}"
 [ -f "$p8" ] || { echo "not a file: $p8" >&2; exit 1; }
 key_id_guess="$(basename "$p8" | sed -nE 's/^AuthKey_([A-Z0-9]+)\.p8$/\1/p')"
 read -rp "Key ID [${key_id_guess:-none}]: " key_id

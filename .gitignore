@@ -7,3 +7,10 @@
 /.claude/
 .DS_Store
 *.log
+
+# Release credentials live here and nowhere else in the tree: the exported
+# Developer ID certificate (.p12) and the App Store Connect API key (.p8)
+# that scripts/release-secrets.sh reads. Never committed, never uploaded.
+/.secrets/
+*.p12
+*.p8
