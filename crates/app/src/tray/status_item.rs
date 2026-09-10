@@ -22,6 +22,36 @@ pub fn format_title(s: &Snapshot) -> String {
     }
 }
 
+/// Appended to the title while an update is available: a space, then
+/// U+25CF, drawn in the accent colour by the controller.
+pub const UPDATE_BADGE: &str = " ●";
+
+/// What the status item shows: the digits, and whether the badge follows
+/// them. Two states that differ only in the badge are different titles,
+/// so a badge appearing or disappearing is redrawn like any other change
+/// — and nothing else is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TitleState {
+    pub title: String,
+    pub badge: bool,
+}
+
+impl TitleState {
+    /// The full string, and the badge's range within it as `NSRange`
+    /// counts: UTF-16 code units, not bytes or chars.
+    pub fn render(&self) -> (String, Option<(usize, usize)>) {
+        if !self.badge {
+            return (self.title.clone(), None);
+        }
+        let location = self.title.encode_utf16().count();
+        let length = UPDATE_BADGE.encode_utf16().count();
+        (
+            format!("{}{UPDATE_BADGE}", self.title),
+            Some((location, length)),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -108,5 +138,50 @@ mod tests {
         // budget, so the branch has to fire below 100 GB, not at it.
         assert_eq!(format_title(&snap(100.0, 102_348)), "100% · 99.9G");
         assert_eq!(format_title(&snap(100.0, 102_349)), "100% · 100G");
+    }
+
+    #[test]
+    fn the_badge_alone_is_a_change() {
+        let plain = TitleState {
+            title: "12% · 17.8G".into(),
+            badge: false,
+        };
+        let badged = TitleState {
+            title: "12% · 17.8G".into(),
+            badge: true,
+        };
+        assert_ne!(plain, badged, "a badge appearing must count as a redraw");
+        assert_eq!(
+            plain,
+            TitleState {
+                title: "12% · 17.8G".into(),
+                badge: false
+            }
+        );
+    }
+
+    #[test]
+    fn a_badged_title_ends_in_the_badge_with_its_utf16_range() {
+        let (text, range) = TitleState {
+            title: "12% · 17.8G".into(),
+            badge: true,
+        }
+        .render();
+        assert_eq!(text, "12% · 17.8G ●");
+        // `·` and `●` are one UTF-16 unit each, so the badge starts at 11
+        // and is two units long (the space and the dot).
+        assert_eq!(range, Some((11, 2)));
+        assert_eq!(UPDATE_BADGE.encode_utf16().count(), 2);
+    }
+
+    #[test]
+    fn an_unbadged_title_renders_bare() {
+        let (text, range) = TitleState {
+            title: "⚠".into(),
+            badge: false,
+        }
+        .render();
+        assert_eq!(text, "⚠");
+        assert_eq!(range, None);
     }
 }

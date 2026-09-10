@@ -16,11 +16,12 @@ use std::time::Instant;
 use objc2::rc::Retained;
 use objc2::{sel, DefinedClass};
 use objc2_app_kit::{
-    NSAlert, NSAlertFirstButtonReturn, NSAlertStyle, NSMenu, NSMenuItem, NSWorkspace,
+    NSAlert, NSAlertFirstButtonReturn, NSAlertStyle, NSColor, NSFont, NSFontAttributeName,
+    NSForegroundColorAttributeName, NSMenu, NSMenuItem, NSWorkspace,
 };
 use objc2_foundation::{
-    MainThreadMarker, NSBundle, NSNotificationCenter, NSRunLoop, NSRunLoopCommonModes, NSString,
-    NSTimer, NSURL,
+    MainThreadMarker, NSBundle, NSMutableAttributedString, NSNotificationCenter, NSRange,
+    NSRunLoop, NSRunLoopCommonModes, NSString, NSTimer, NSURL,
 };
 
 use crate::update::checker::{
@@ -83,6 +84,38 @@ pub(super) fn open_page(url: &str) {
         Some(ns_url) if NSWorkspace::sharedWorkspace().openURL(&ns_url) => {}
         _ => eprintln!("vitals: could not open {url}"),
     }
+}
+
+/// `text` in `font` and the label colour, with the accent colour over
+/// `accent` (UTF-16 location and length). The label colour is set
+/// explicitly because an attributed title otherwise draws in black, which
+/// a dark menu bar or menu does not tolerate; the accent colour is added
+/// last so it wins over the label colour on its range.
+pub(super) fn styled(
+    text: &str,
+    font: &NSFont,
+    accent: (usize, usize),
+) -> Retained<NSMutableAttributedString> {
+    let attributed = NSMutableAttributedString::from_nsstring(&NSString::from_str(text));
+    let whole = NSRange::new(0, text.encode_utf16().count());
+    let (location, length) = accent;
+    // SAFETY: the keys are AppKit's own constants; the values are an
+    // NSFont and NSColors, the types those keys take; both ranges lie
+    // within the string, whose length is measured the way NSRange counts.
+    unsafe {
+        attributed.addAttribute_value_range(NSFontAttributeName, font, whole);
+        attributed.addAttribute_value_range(
+            NSForegroundColorAttributeName,
+            &NSColor::labelColor(),
+            whole,
+        );
+        attributed.addAttribute_value_range(
+            NSForegroundColorAttributeName,
+            &NSColor::controlAccentColor(),
+            NSRange::new(location, length),
+        );
+    }
+    attributed
 }
 
 /// Release notes as the alert shows them: at most 1,500 characters, then `…`.
@@ -224,6 +257,7 @@ impl Controller {
             .state
             .borrow_mut()
             .apply(outcome.clone(), Instant::now());
+        self.refresh_title();
         if !manual {
             return;
         }
@@ -281,9 +315,11 @@ impl Controller {
                     menu.insertItem_atIndex(&items.row_separator, 0);
                     menu.insertItem_atIndex(&items.row, 0);
                 }
-                items.row.setTitle(&NSString::from_str(&format!(
-                    "● Update to Vitals {}…",
-                    release.version
+                let title = format!("● Update to Vitals {}…", release.version);
+                items.row.setAttributedTitle(Some(&styled(
+                    &title,
+                    &NSFont::menuFontOfSize(0.0),
+                    (0, 1),
                 )));
                 items.row.setEnabled(true);
             }

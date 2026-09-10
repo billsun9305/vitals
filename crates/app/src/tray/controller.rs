@@ -48,7 +48,7 @@ use vitals_core::thermal::{low_power_mode, on_battery, thermal_state};
 
 use super::child::DashboardProcess;
 use super::panel::PanelView;
-use super::status_item::format_title;
+use super::status_item::{format_title, TitleState};
 use super::update_ui::{self, UpdateIvars};
 use crate::update::release::Source;
 
@@ -82,8 +82,8 @@ pub struct Ivars {
     handle: SamplerHandle,
     cadence: Arc<Cadence>,
     state: Cell<TrayState>,
-    /// Last string handed to AppKit, so an unchanged tick costs nothing.
-    last_title: RefCell<String>,
+    /// Last title handed to AppKit, badge included, so an unchanged tick costs nothing.
+    pub(super) last_title: RefCell<TitleState>,
     last_snapshot: RefCell<Option<Snapshot>>,
     last_error: RefCell<Option<String>>,
     timer: RefCell<Option<Retained<NSTimer>>>,
@@ -299,7 +299,10 @@ impl Controller {
             handle,
             cadence,
             state: Cell::new(state),
-            last_title: RefCell::new(PLACEHOLDER_TITLE.to_string()),
+            last_title: RefCell::new(TitleState {
+                title: PLACEHOLDER_TITLE.to_string(),
+                badge: false,
+            }),
             last_snapshot: RefCell::new(None),
             last_error: RefCell::new(None),
             timer: RefCell::new(None),
@@ -564,16 +567,30 @@ impl Controller {
     }
 
     fn set_title(&self, title: &str) {
-        if *self.ivars().last_title.borrow() == title {
+        let next = TitleState {
+            title: title.to_string(),
+            badge: self.ivars().update.state.borrow().available.is_some(),
+        };
+        if *self.ivars().last_title.borrow() == next {
             return; // budget rule: only touch AppKit when the string changed
         }
-        if let Some(button) = self
-            .ivars()
-            .status_item
-            .button(MainThreadMarker::from(self))
-        {
-            button.setTitle(&NSString::from_str(title));
+        let mtm = MainThreadMarker::from(self);
+        if let Some(button) = self.ivars().status_item.button(mtm) {
+            let (text, badge) = next.render();
+            match (badge, button.font()) {
+                (Some(range), Some(font)) => {
+                    button.setAttributedTitle(&update_ui::styled(&text, &font, range))
+                }
+                _ => button.setTitle(&NSString::from_str(&text)),
+            }
         }
-        *self.ivars().last_title.borrow_mut() = title.to_string();
+        *self.ivars().last_title.borrow_mut() = next;
+    }
+
+    /// Redraw for a badge change alone: the digits are unchanged, so this
+    /// is a no-op unless `available` moved.
+    pub(super) fn refresh_title(&self) {
+        let title = self.ivars().last_title.borrow().title.clone();
+        self.set_title(&title);
     }
 }
