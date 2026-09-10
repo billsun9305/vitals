@@ -53,9 +53,27 @@ impl Version {
         })
     }
 
+    /// Parses the `MAJOR.MINOR.PATCH` prefix of a crate version, ignoring
+    /// any `-suffix` (a pre-release build's `CARGO_PKG_VERSION`, e.g.
+    /// `"0.2.0-beta.1"`). Falls back to `0.0.0` if even that fails — this
+    /// is total, never panics, because it backs [`Version::current`].
+    pub fn from_crate_version(s: &str) -> Version {
+        let base = s.split('-').next().unwrap_or(s);
+        Version::parse(base).unwrap_or(Version {
+            major: 0,
+            minor: 0,
+            patch: 0,
+        })
+    }
+
     /// The version this binary was built as.
+    ///
+    /// A pre-release build (`CARGO_PKG_VERSION` like `"0.2.0-beta.1"`)
+    /// reports its base version, `0.2.0` — it is not offered the final
+    /// `0.2.0` as an update (same version, nothing newer); testers running
+    /// a pre-release reinstall by hand.
     pub fn current() -> Version {
-        Version::parse(env!("CARGO_PKG_VERSION")).expect("CARGO_PKG_VERSION is MAJOR.MINOR.PATCH")
+        Version::from_crate_version(env!("CARGO_PKG_VERSION"))
     }
 }
 
@@ -318,6 +336,18 @@ mod tests {
     #[test]
     fn current_version_is_the_crate_version() {
         assert_eq!(Version::current().to_string(), env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn from_crate_version_never_panics_on_a_pre_release_suffix() {
+        let v = |major, minor, patch| Version {
+            major,
+            minor,
+            patch,
+        };
+        assert_eq!(Version::from_crate_version("0.2.0-beta.1"), v(0, 2, 0));
+        assert_eq!(Version::from_crate_version("0.1.0"), v(0, 1, 0));
+        assert_eq!(Version::from_crate_version("garbage"), v(0, 0, 0));
     }
 
     #[test]
