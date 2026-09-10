@@ -5,6 +5,7 @@
 //! in a process that never runs `NSApplication`.
 
 use std::process::{Command, Stdio};
+use std::thread;
 use std::time::{Duration, Instant};
 
 fn relaunch(parent: u32, app: &str) -> std::process::Output {
@@ -28,19 +29,32 @@ fn spawn_relaunch(parent: u32, app: &str) -> std::process::Child {
 
 #[test]
 fn the_helper_waits_for_its_parent_before_doing_anything() {
-    // A 2s parent gives real separation from process-start-plus-dyld noise:
-    // a helper that never waited at all would still return in well under a
-    // second, so passing here can only mean it waited on the parent.
+    // The parent's exit and the helper's return have to be observed on two
+    // separate threads for `helper_returned >= parent_exited` to prove
+    // anything: `parent.wait()` runs on its own thread concurrently with
+    // this thread blocking on `helper.wait_with_output()`, so the two
+    // waits race for real instead of running one after the other in
+    // program order, where the ordering would hold trivially no matter
+    // what the helper does. A 2s parent also gives `took` real separation
+    // from process-start-plus-dyld noise: a helper that never called
+    // `wait_for_exit` would return in well under a second, so
+    // `took >= 1500ms` alone already catches a regression that skips the
+    // wait, and the cross-thread ordering assertion catches one that waits
+    // on the wrong thing.
     let mut parent = Command::new("sleep").arg("2").spawn().unwrap();
-    let helper = spawn_relaunch(parent.id(), "/nonexistent/Vitals.app");
     let started = Instant::now();
+    let helper = spawn_relaunch(parent.id(), "/nonexistent/Vitals.app");
 
-    parent.wait().expect("wait for parent");
-    let parent_exited = Instant::now();
+    let parent_thread = thread::spawn(move || {
+        parent.wait().expect("wait for parent");
+        Instant::now()
+    });
 
     let out = helper.wait_with_output().expect("wait for helper");
     let helper_returned = Instant::now();
     let took = started.elapsed();
+
+    let parent_exited = parent_thread.join().expect("parent thread panicked");
 
     assert!(
         helper_returned >= parent_exited,
