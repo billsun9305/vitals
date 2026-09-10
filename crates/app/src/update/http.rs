@@ -4,7 +4,13 @@
 //! Both block the calling thread — they are only ever called from the
 //! checker's and the installer's worker threads — and both build a fresh
 //! ephemeral session per call and invalidate it afterwards, so nothing
-//! lingers between checks (the idle budget in `docs/budget.md`).
+//! lingers between checks (the idle budget in `docs/budget.md`). Two
+//! timeouts bound that: `timeoutIntervalForRequest` caps idle time (10 s
+//! between bytes) and `timeoutIntervalForResource` caps the whole transfer
+//! (10 min), because the idle timer alone resets on every byte and a
+//! trickling connection could otherwise hold the session, the worker
+//! thread and its socket open forever — nothing of a request may outlive
+//! it.
 //!
 //! The completion block runs on a queue of the session's choosing, never
 //! on the caller's thread, so it must not hand Objective-C objects back
@@ -29,6 +35,13 @@ use super::release::UpdateError;
 /// slow download of the tarball is not cut off half way.
 pub const TIMEOUT_S: f64 = 10.0;
 
+/// Seconds a whole transfer may take, start to finish. This is
+/// `timeoutIntervalForResource`: unlike `TIMEOUT_S`, it does not reset when
+/// a byte arrives, so it is what bounds a connection that trickles one byte
+/// every few seconds and would otherwise never trip the idle timeout. Ten
+/// minutes is far more than a ~10 MB tarball needs on a slow link.
+const RESOURCE_TIMEOUT_S: f64 = 600.0;
+
 /// The request every call sends: the GitHub REST headers and our own
 /// `User-Agent`. Nothing else — no token, no cookie.
 fn request(url: &str) -> Result<Retained<NSMutableURLRequest>, UpdateError> {
@@ -50,10 +63,12 @@ fn request(url: &str) -> Result<Retained<NSMutableURLRequest>, UpdateError> {
 }
 
 /// One session per call: ephemeral (no cache, no cookie jar, nothing on
-/// disk) with the request timeout above. The caller invalidates it.
+/// disk) with the request and resource timeouts above. The caller
+/// invalidates it.
 fn session() -> Retained<NSURLSession> {
     let config = NSURLSessionConfiguration::ephemeralSessionConfiguration();
     config.setTimeoutIntervalForRequest(TIMEOUT_S);
+    config.setTimeoutIntervalForResource(RESOURCE_TIMEOUT_S);
     NSURLSession::sessionWithConfiguration(&config)
 }
 
