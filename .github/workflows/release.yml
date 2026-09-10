@@ -1,0 +1,177 @@
+name: Release
+
+# A `v*` tag builds, signs, notarizes and publishes a GitHub Release whose
+# assets are what the app's updater and a new user both download. Run by
+# hand (workflow_dispatch) it does everything except publish and uploads
+# the files as a workflow artifact instead, so the signing path can be
+# exercised before a tag exists.
+#
+# Signing and notarization happen only when the repository secret
+# MACOS_CERT_P12 is set (see scripts/release-secrets.sh). Without it the
+# app is ad-hoc signed and the release notes say so.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # Apple Silicon only, the same runner as ci.yml.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      # The tag, Cargo.toml and Info.plist must agree before anything is
+      # built. A manual run takes Cargo.toml's version as the tag's.
+      - name: Version
+        id: version
+        run: |
+          cargo_version="$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -1)"
+          plist_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' resources/Info.plist)"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="$cargo_version"
+          fi
+          if [ "$version" != "$cargo_version" ] || [ "$version" != "$plist_version" ]; then
+            echo "version mismatch: tag $version, Cargo.toml $cargo_version, Info.plist $plist_version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          case "$version" in
+            *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
+            *)   echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+          echo "signed=${{ secrets.MACOS_CERT_P12 != '' }}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Dashboard
+        working-directory: dashboard
+        run: |
+          npm ci
+          npm run build
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # The certificate goes into a throwaway keychain that only this job
+      # can see; the identity's name is handed to bundle.sh through
+      # SIGN_IDENTITY. The keychain password is random and never printed.
+      - name: Import signing certificate
+        if: steps.version.outputs.signed == 'true'
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/release.keychain-db"
+          keychain_password="$(uuidgen)"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          printf '%s' "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$MACOS_CERT_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain"
+          security list-keychains -d user -s "$keychain" login.keychain-db
+          identity="$(security find-identity -v -p codesigning "$keychain" \
+            | sed -nE 's/.*"(Developer ID Application: [^"]+)".*/\1/p' | head -1)"
+          if [ -z "$identity" ]; then
+            echo "the imported certificate holds no 'Developer ID Application' identity" >&2
+            exit 1
+          fi
+          echo "SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+
+      - name: Bundle
+        run: make bundle
+
+      # Notarization needs a zip of the bundle; the ticket is then stapled
+      # into the bundle itself, so every artefact made from it carries it.
+      - name: Notarize the app
+        if: steps.version.outputs.signed == 'true'
+        env:
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          printf '%s' "$NOTARY_KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
+          ditto -c -k --keepParent dist/Vitals.app "$RUNNER_TEMP/Vitals.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/Vitals.zip" \
+            --key "$RUNNER_TEMP/AuthKey.p8" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" --wait
+          xcrun stapler staple dist/Vitals.app
+
+      # The tarball is the updater's asset: exactly one top-level entry,
+      # Vitals.app. COPYFILE_DISABLE and --no-xattrs keep bsdtar from adding
+      # ._ AppleDouble entries and extended-attribute headers, which would
+      # break that rule and carry a quarantine flag respectively.
+      # The disk image is the human's download.
+      - name: Pack
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p out
+          COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata -C dist -czf "out/Vitals-$VERSION-arm64.tar.gz" Vitals.app
+          tar -tzf "out/Vitals-$VERSION-arm64.tar.gz" | cut -d/ -f1 | sort -u
+          staging="$RUNNER_TEMP/dmg"
+          mkdir -p "$staging"
+          cp -R dist/Vitals.app "$staging/"
+          ln -s /Applications "$staging/Applications"
+          hdiutil create -volname "Vitals $VERSION" -srcfolder "$staging" -format UDZO -ov "out/Vitals-$VERSION.dmg"
+
+      - name: Sign and notarize the disk image
+        if: steps.version.outputs.signed == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          codesign --sign "$SIGN_IDENTITY" --timestamp "out/Vitals-$VERSION.dmg"
+          xcrun notarytool submit "out/Vitals-$VERSION.dmg" \
+            --key "$RUNNER_TEMP/AuthKey.p8" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" --wait
+          xcrun stapler staple "out/Vitals-$VERSION.dmg"
+
+      - name: Sums and notes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SIGNED: ${{ steps.version.outputs.signed }}
+        run: |
+          (cd out && shasum -a 256 "Vitals-$VERSION-arm64.tar.gz" "Vitals-$VERSION.dmg" > SHA256SUMS)
+          cat out/SHA256SUMS
+          scripts/changelog-section.sh "$VERSION" > out/notes.md \
+            || scripts/changelog-section.sh Unreleased > out/notes.md
+          if [ "$SIGNED" != true ]; then
+            cat >> out/notes.md <<'NOTE'
+
+---
+
+**This build is not notarized.** It is signed ad hoc, so macOS refuses to open it the first time. To open it: try once, then go to System Settings → Privacy & Security, scroll to the message about Vitals, and click *Open Anyway*.
+NOTE
+          fi
+          cat out/notes.md
+
+      - name: Publish
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
+        run: |
+          prerelease=""
+          if [ "$PRERELEASE" = true ]; then prerelease="--prerelease"; fi
+          gh release create "v$VERSION" --title "Vitals $VERSION" --notes-file out/notes.md $prerelease \
+            "out/Vitals-$VERSION.dmg" "out/Vitals-$VERSION-arm64.tar.gz" out/SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        if: github.ref_type != 'tag'
+        with:
+          name: release-${{ steps.version.outputs.version }}
+          path: out/
+          if-no-files-found: error

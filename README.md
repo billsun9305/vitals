@@ -408,17 +408,44 @@ plist is trivially inspectable (`plutil -lint`,
 
 ### Releasing a new version
 
-Not automated by this repo, and not run as part of building or installing
-it — recorded here for whoever cuts the next tag:
+One script cuts a release; one workflow publishes it.
 
 ```bash
-git tag v0.1.0
-git push --follow-tags
+scripts/release.sh 0.2.0     # bumps Cargo.toml, Info.plist and CHANGELOG.md, commits, tags v0.2.0
+git push --follow-tags       # the push is deliberately manual
 ```
 
-Bump `CFBundleShortVersionString` in `resources/Info.plist` and
-`workspace.package.version` in `Cargo.toml` together before tagging; they
-are not currently derived from each other.
+`scripts/release.sh --dry-run 0.2.0` prints the diff without touching
+anything; CI runs that dry run on every push. A version with a hyphen
+suffix (`0.2.0-beta.1`) becomes a GitHub pre-release, which installed apps
+never see.
+
+The tag triggers `.github/workflows/release.yml` on an Apple Silicon
+runner. It checks that the tag, `Cargo.toml` and `Info.plist` agree,
+builds the dashboard and the bundle, signs and notarizes when the
+secrets exist, and publishes a GitHub Release with three assets:
+
+| Asset | Who uses it |
+|---|---|
+| `Vitals-<version>.dmg` | You. A notarized disk image: open, drag to Applications. |
+| `Vitals-<version>-arm64.tar.gz` | The app's updater. Exactly one top-level entry, `Vitals.app/`. |
+| `SHA256SUMS` | The updater, to verify the tarball before unpacking it. |
+
+The updater also relies on the bundle's `CFBundleShortVersionString`
+equalling the release version, and on a signed release carrying a
+Developer ID signature from the same Team ID as the running copy.
+
+**Signing.** Five repository secrets make a release signed and notarized:
+`MACOS_CERT_P12` (a Developer ID Application certificate, base64),
+`MACOS_CERT_PASSWORD`, `NOTARY_KEY_ID`, `NOTARY_ISSUER_ID` and
+`NOTARY_KEY_P8` (an App Store Connect API key). `scripts/release-secrets.sh`
+sets all five from your own machine and explains, in its header, how to
+create the two things Apple has to issue. Without the secrets the workflow
+still publishes a working release, ad-hoc signed, and the release notes
+say how to open it. Running the workflow by hand (*Actions → Release →
+Run workflow*) does everything except publish, and uploads the three
+files as an artifact instead — the way to try the signing path before a
+tag exists.
 
 ## Development
 
