@@ -1,22 +1,22 @@
-# In-app updates — design
+# In-app updates and distribution — design
 
-Date: 2026-09-09. Status: approved in conversation, awaiting written review.
+Date: 2026-09-09. Status: sections 1–6 approved in conversation, awaiting written review.
 
 ## Goal
 
-When a new version of vitals is published, every installed menu bar copy
-shows that an update exists and can install it in one click, without the
-user visiting GitHub, downloading anything by hand, or re-running
-`make install-app`.
+A new user installs vitals by downloading a notarized disk image from the
+GitHub Releases page, with no GitHub account and no Apple account, drags it
+to Applications, and it starts at login from then on. When a new version
+is published, every installed menu bar copy shows that an update exists
+and can install it in one click, without the user visiting GitHub,
+downloading anything by hand, or re-running `make install-app`.
 
 ## Non-goals
 
 - No automatic installs. The user always clicks *Install and Relaunch*.
 - No "skip this version", no beta channel, no update settings UI.
-- No code signing beyond the existing ad-hoc signature, no notarization.
-- No updating of the LaunchAgent plist (it is not part of the bundle and
-  nothing in it changes between versions today).
-- Nothing for the CLI verbs. Updates are a tray feature.
+- No Homebrew tap, no Intel build, no Mac App Store.
+- Nothing for the CLI verbs. Updates and autostart are tray features.
 
 ## Decisions already made
 
@@ -27,6 +27,9 @@ user visiting GitHub, downloading anything by hand, or re-running
 | What a click does | A confirmation alert with the release notes: *Install and Relaunch* / *Later* / *View Release* |
 | How it is built | `NSURLSession` for HTTP, `flate2` + `tar` to unpack, `sha2` to verify; no subprocess other than our own binary |
 | Relaunch | A hidden `vitals relaunch` helper that waits for the old tray to exit, then launches the new bundle |
+| How a new user installs | `Vitals-x.y.z.dmg` from the Releases page, which is public: no GitHub account, no Apple account. Actions artifacts are not a download: they need a login, expire, and lose file permissions |
+| Signing | Developer ID Application + hardened runtime + notarization + stapling, done by CI when the repository secrets exist; ad-hoc otherwise, and the release notes say which |
+| Autostart | The app registers itself as a login item with `SMAppService.mainApp` on first bundled launch, with a *Start at Login* toggle in the dropdown. The LaunchAgent plist is removed |
 
 ## 1. Release pipeline
 
@@ -62,29 +65,64 @@ as `ci.yml`. Steps:
 1. **Version check**: the tag (minus `v`), `Cargo.toml`'s workspace
    version and `Info.plist`'s `CFBundleShortVersionString` must all be
    equal, or the job fails before building anything.
-2. **Build**: dashboard `npm ci && npm run build`, then `make bundle` —
-   the same commands as CI.
-3. **Pack**: `tar -C dist -czf Vitals-x.y.z-arm64.tar.gz Vitals.app`.
-   `Vitals.app/` is the only top-level entry.
-4. **Sums**: `shasum -a 256 Vitals-x.y.z-arm64.tar.gz > SHA256SUMS`
-   (two-space format: `<hex>  <filename>`).
-5. **Notes**: `scripts/changelog-section.sh x.y.z` prints the body of
-   that version's section from `CHANGELOG.md`.
-6. **Publish**: `gh release create vx.y.z --title "Vitals x.y.z"
-   --notes-file <notes> Vitals-x.y.z-arm64.tar.gz SHA256SUMS`, with
-   `--prerelease` when the version has a hyphen suffix. Uses the
-   workflow's `GITHUB_TOKEN` with `contents: write`.
+2. **Build**: dashboard `npm ci && npm run build`, then `make bundle`,
+   the same commands as CI. `make bundle` runs `scripts/bundle.sh`, which
+   does the signing described next.
+3. **Sign**: `scripts/bundle.sh` packs `dist/Vitals.app` and signs it with
+   `$SIGN_IDENTITY`, default `-` (ad-hoc, what it does today). When the
+   secret `MACOS_CERT_P12` exists, the workflow first imports the
+   certificate into a temporary keychain (`security create-keychain`,
+   `security import`, `security set-key-partition-list`) and sets
+   `SIGN_IDENTITY` to the `Developer ID Application` identity. With a real
+   identity `bundle.sh` adds `--options runtime --timestamp`; there is no
+   entitlements file, because the app needs none.
+4. **Notarize** (only when signed): `ditto -c -k --keepParent
+   dist/Vitals.app Vitals.zip`, then `xcrun notarytool submit Vitals.zip
+   --key <p8> --key-id $NOTARY_KEY_ID --issuer $NOTARY_ISSUER_ID --wait`,
+   then `xcrun stapler staple dist/Vitals.app`. The ticket lives inside
+   the bundle, so every later artefact carries it.
+5. **Pack**: `tar -C dist -czf Vitals-x.y.z-arm64.tar.gz Vitals.app`.
+   `Vitals.app/` is the only top-level entry. This is the updater's asset.
+6. **Disk image**: a staging folder holding `Vitals.app` and an
+   `Applications` symlink, then `hdiutil create -volname "Vitals x.y.z"
+   -srcfolder <staging> -format UDZO Vitals-x.y.z.dmg`. When signed, the
+   DMG is itself signed, notarized and stapled the same way. This is the
+   human's download.
+7. **Sums**: `shasum -a 256 Vitals-x.y.z-arm64.tar.gz Vitals-x.y.z.dmg >
+   SHA256SUMS` (two-space format: `<hex>  <filename>`).
+8. **Notes**: `scripts/changelog-section.sh x.y.z` prints the body of
+   that version's section from `CHANGELOG.md`. When the build was not
+   signed, the workflow appends a paragraph saying the app is ad-hoc
+   signed and how to open it (System Settings, Privacy & Security, *Open
+   Anyway*).
+9. **Publish**: `gh release create vx.y.z --title "Vitals x.y.z"
+   --notes-file <notes> Vitals-x.y.z.dmg Vitals-x.y.z-arm64.tar.gz
+   SHA256SUMS`, with `--prerelease` when the version has a hyphen suffix.
+   Uses the workflow's `GITHUB_TOKEN` with `contents: write`.
+
+### Secrets
+
+Five repository secrets, all created and set by the maintainer, never by
+tooling: `MACOS_CERT_P12` (the Developer ID Application certificate
+exported from Keychain Access, base64), `MACOS_CERT_PASSWORD`,
+`NOTARY_KEY_ID`, `NOTARY_ISSUER_ID` and `NOTARY_KEY_P8` (an App Store
+Connect API key with the Developer role). Step 3's import and step 4 run only when `MACOS_CERT_P12` is set, so a fork without secrets still produces a
+working, ad-hoc release.
 
 ### The contract the app relies on
 
-- Asset names: `Vitals-<version>-arm64.tar.gz` and `SHA256SUMS`.
+- Asset names: `Vitals-<version>-arm64.tar.gz`, `Vitals-<version>.dmg`
+  and `SHA256SUMS`. The updater reads only the first and the last.
 - Tarball layout: exactly one top-level entry, `Vitals.app/`.
 - The bundle's `Info.plist` version equals the release version.
+- A signed release's bundle carries a Developer ID signature with the
+  maintainer's Team ID and a stapled notarization ticket.
 - Asset download URLs are
   `https://github.com/billsun9305/vitals/releases/download/v<version>/<name>`.
 
 README's "Releasing a new version" section is rewritten to describe the
-script and this contract.
+script, the secrets and this contract. `scripts/bundle.sh` loses its
+comment that the binary "will never leave this machine".
 
 ## 2. The checker
 
@@ -96,7 +134,7 @@ New module `crates/app/src/update/` in the app crate:
 |---|---|---|
 | `release.rs` | `Version`, `Release`, `Source`, GitHub JSON parsing, `SHA256SUMS` parsing, URL validation. Pure. | no |
 | `http.rs` | `fetch(url) -> Result<Vec<u8>>` and `download(url, to_dir) -> Result<PathBuf>` over `NSURLSession`; results come back through a channel from the completion block. | Foundation only |
-| `install.rs` | Stage, download, verify, unpack, check, spawn helper, swap. | Foundation only |
+| `install.rs` | Stage, download, verify, unpack, check version and signature, spawn helper, swap. | Foundation + Security |
 | `checker.rs` | Timers, state, the main-thread hand-off, menu wiring hooks. | yes |
 | `relaunch.rs` | The `vitals relaunch` helper's body. | Foundation + `NSWorkspace` |
 
@@ -234,9 +272,17 @@ The steps:
    `Vitals.app`. Then read `Vitals.app/Contents/Info.plist` with
    `NSDictionary::dictionaryWithContentsOfURL` and require
    `CFBundleShortVersionString == release.version`. Executable bits come
-   from the tar entries. No quarantine attribute is set because no
+      from the tar entries. No quarantine attribute is set because no
    quarantine-aware app touched the bytes; the integration test asserts
    the attribute is absent.
+   **Then check the signature.** Read the running bundle's Team ID with
+   the Security framework (`SecCodeCopySelf`,
+   `SecCodeCopySigningInformation`, `kSecCodeInfoTeamIdentifier`, through
+   the `objc2-security` crate). If there is one, the staged bundle must
+   pass `SecStaticCodeCheckValidity` against the requirement
+   `anchor apple generic and certificate leaf[subject.OU] = "<team id>"`,
+   or the install stops with `UpdateError::BadSignature`. An ad-hoc copy
+   (a local build) has no Team ID and skips this check.
 5. **Spawn the helper.** `std::process::Command::new(current_exe())
    .args(["relaunch", "--parent", <pid>, "--app", <app path>])`, stdio
    null. The helper waits on the parent with `window::parent::wait_for_exit`
@@ -247,10 +293,11 @@ The steps:
 6. **Swap.** `NSFileManager::replaceItemAtURL(app_url, withItemAtURL:
    staged_app, backupItemName: nil, options: [])`. The old bundle is
    discarded; the running process keeps its mapped binary.
-7. **Terminate.** Back on the main thread, `NSApp.terminate`. The
-   LaunchAgent has `KeepAlive=false`, so launchd does not relaunch the
-   old copy; the helper launches the new one. The old status item is gone
-   before the new one appears.
+7. **Terminate.** Back on the main thread, `NSApp.terminate`. Nothing
+   else relaunches the old copy: autostart is a login item (section 6),
+   which only acts at login. The helper launches the new one, and the old
+   status item is gone before the new one appears. The login item follows
+   the bundle path, so it survives the swap.
 
 ### Failure
 
@@ -263,10 +310,12 @@ spawned, leave the installed bundle untouched, show one alert
 
 - The API host is fixed (`Source::github()`); the response's URLs are only
   accepted when they start with our own `releases/download/` prefix.
-- The tarball's hash must match `SHA256SUMS`, which comes from the same
-  release. This protects against corruption and mismatched assets, not
-  against a compromised GitHub account; with ad-hoc signing there is
-  nothing stronger to check, and the README's security section says so.
+- The tarball's hash must match `SHA256SUMS` from the same release; that
+  catches corruption and mismatched assets. Authenticity is the signature
+  check in step 4: when the running copy is Developer-ID-signed, the new
+  bundle must be validly signed with the same Team ID, which a compromised
+  GitHub account cannot produce. An ad-hoc copy has no Team ID and gets
+  only the hash, and SECURITY.md says so.
 - `tar::Archive` is configured with `set_overwrite(false)` and unpacks into
   the fresh staging directory only; entries escaping the directory are
   rejected by the crate.
@@ -276,8 +325,9 @@ spawned, leave the installed bundle untouched, show one alert
 
 ### Budget
 
-- Binary: `flate2`, `tar`, `sha2` are added to the app crate. The new
-  size is measured and recorded in `docs/budget.md` against the 6 MB cap.
+- Binary: `flate2`, `tar`, `sha2`, `objc2-security` and
+  `objc2-service-management` are added to the app crate. The new size is
+  measured and recorded in `docs/budget.md` against the 6 MB cap.
 - Idle: one `NSTimer` per day with an hour of tolerance. No thread or
   socket exists between checks; each check's `NSURLSession` is created
   per check and `finishTasksAndInvalidate`d after it.
@@ -287,6 +337,7 @@ spawned, leave the installed bundle untouched, show one alert
 ### CLI additions
 
 - Hidden `Command::Relaunch { parent: u32, app: PathBuf }`.
+- Hidden `Command::LoginItem { action: On | Off | Status }` (section 6).
 - Hidden `--update-source <url>` on the bare (tray) invocation.
 
 ## 5. Testing
@@ -311,7 +362,9 @@ whose `Info.plist` carries the target version. The test uses
 
 1. Happy path: the installed bundle is replaced; its `Info.plist` now
    carries the new version; the staging directory is gone; the new
-   bundle has no `com.apple.quarantine` attribute. (The test calls `prepare` then
+   bundle has no `com.apple.quarantine` attribute; the signature check
+   was skipped because the test binary has no Team ID, and the log says
+   so. (The test calls `prepare` then
    `swap_into` and never `Helper::spawn`, so no process is launched from
    a test.)
 2. Wrong hash: `Err(BadChecksum)`, installed bundle byte-for-byte
@@ -328,27 +381,115 @@ project: the dashboard window loads `http://127.0.0.1:9876/` the same way.
 
 CI runs `scripts/release.sh --dry-run 9.9.9` and
 `scripts/changelog-section.sh Unreleased` and fails if either errors or
-prints nothing.
+prints nothing. `make bundle` in CI runs `bundle.sh` with the default
+ad-hoc identity, as today.
+
+### Login item (section 6)
+
+`login_item::menu_state` is pure and unit-tested for every
+`SMAppServiceStatus` value. Registration itself is AppKit-side and is
+verified by running it: the manual test below.
 
 ### Manual, before the first tag
 
-Build a `0.1.0` and a `0.1.1` bundle locally; serve the `0.1.1` tarball,
-`SHA256SUMS` and a hand-written `latest.json` with any static file server;
-install `0.1.0` to `/Applications` and run it with `--update-source`;
-confirm the dot, the row, the alert, the relaunch, the new version in the
-menu, and the tray footprint. Record the result in `docs/budget.md`.
+1. **Hardened runtime.** Sign a local bundle with the Developer ID
+   identity on this Mac (`SIGN_IDENTITY="Developer ID Application: …"
+   make bundle`) and run the tray, the dashboard window and every CLI
+   verb from it. Nothing in the app loads third-party code, so nothing
+   should change, but this is the first time it runs hardened.
+2. **Update.** Build a `0.1.0` and a `0.1.1` bundle, both signed the same
+   way; serve the `0.1.1` tarball, `SHA256SUMS` and a hand-written
+   `latest.json` with any static file server; install `0.1.0` to
+   `/Applications` and run it with `--update-source`; confirm the dot, the
+   row, the alert, the signature check passing, the relaunch, the new
+   version in the menu, and the tray footprint. Then repeat once with a
+   `0.1.1` signed ad-hoc and confirm `BadSignature` and an untouched
+   `0.1.0`.
+3. **Login item.** After `make install-app`, confirm Vitals appears under
+   System Settings, General, Login Items, that the dropdown's *Start at
+   Login* is checked, that unchecking it removes the entry, and that a
+   log-out and log-in starts the tray.
+4. **Download path.** After the first tagged release, download the DMG on
+   this Mac with a browser, drag, open: no Gatekeeper dialog.
+
+Record the numbers in `docs/budget.md`.
+
+## 6. Install and autostart
+
+### The app registers itself
+
+New module `crates/app/src/tray/login_item.rs`, over
+`objc2-service-management`'s `SMAppService` (`mainAppService`,
+`registerAndReturnError`, `unregisterAndReturnError`, `status`,
+`openSystemSettingsLoginItems`; macOS 13+, our floor is 14):
+
+```rust
+pub enum LoginStatus { Enabled, NotRegistered, RequiresApproval, NotFound }
+pub fn status() -> LoginStatus;
+pub fn set(on: bool) -> Result<(), String>;
+/// First bundled launch only: registers, then records `registeredAtLogin = true`
+/// in NSUserDefaults so a user who later turns it off is not re-enrolled.
+pub fn register_once();
+/// Pure: (title, checked, enabled) for the menu item.
+pub fn menu_state(status: LoginStatus) -> (&'static str, bool, bool);
+```
+
+`register_once` runs when the tray starts from a bundle, after the status
+item exists. `menu_state` maps `Enabled` to (`Start at Login`, checked,
+enabled), `NotRegistered` to (`Start at Login`, unchecked, enabled),
+`RequiresApproval` to (`Start at Login — approve in System Settings…`,
+unchecked, enabled; clicking opens the Login Items pane), and `NotFound`
+to (`Start at Login`, unchecked, disabled).
+
+### Dropdown
+
+`Start at Login` sits between *Open Dashboard* and *Check for Updates…*,
+refreshed from `status()` in `menuWillOpen:` like the update rows. Only
+when running from a bundle.
+
+### The LaunchAgent goes away
+
+`resources/com.billsun.vitals.plist` is deleted. `make install-app`
+becomes: `make bundle`, copy to `/Applications`, symlink `$(PREFIX)/bin/vitals`,
+`open /Applications/Vitals.app`. It also removes a
+`~/Library/LaunchAgents/com.billsun.vitals.plist` left by an earlier
+install, after `launchctl unload`, so nothing launches twice.
+`make uninstall-app` runs `vitals login-item off` from the installed
+bundle, quits the tray, and removes the bundle and the symlink. The hidden
+`Command::LoginItem` exists for these two targets and the manual test.
+
+### README "Install", rewritten
+
+Three subsections, in this order:
+
+1. **Download** — Requirements (Apple Silicon, macOS 14 or newer). Open
+   the Releases page, download `Vitals-x.y.z.dmg`, drag to Applications,
+   open. It is notarized, so it opens without a dialog, and it starts at
+   login from now on, with the toggle in the menu. If a release's notes
+   say the build is unsigned, the way to open it is System Settings,
+   Privacy & Security, *Open Anyway*.
+2. **From source, menu bar app** — `git clone`, Rust via rustup, Node 22,
+   then `make install-app PREFIX=$HOME/.local`. No `sudo` anywhere; the
+   current advice to run the target under `sudo` is removed, because it
+   would run `npm ci`, `cargo build` and the app launch as root.
+3. **From source, CLI only** — `make install PREFIX=$HOME/.local`.
 
 ## Documentation changes
 
-- README: rewrite "Releasing a new version"; add an "Updates" paragraph
-  to the menu bar section (what is checked, how often, what is sent).
-- CONTRIBUTING: the `--update-source` flag and the manual test.
-- SECURITY: what the hash does and does not protect against.
-- CHANGELOG `[Unreleased]`: the feature.
+- README: the Install section above; rewrite "Releasing a new version";
+  an "Updates" paragraph in the menu bar section (what is checked, how
+  often, what is sent); the LaunchAgent paragraph replaced by the login
+  item.
+- CONTRIBUTING: `SIGN_IDENTITY`, the `--update-source` flag, the hidden
+  verbs, and the manual tests.
+- SECURITY: the signature check, and what the hash alone protects
+  against on an ad-hoc copy.
+- CHANGELOG `[Unreleased]`: both features.
 - `docs/budget.md`: the binary size and the footprint numbers.
 
 ## Order of work
 
-The updater must be in the first tagged release, or the copies installed
-from it can never learn about the second. So: implement, measure, then
-`scripts/release.sh 0.1.0`.
+The updater and the login item must both be in the first tagged release,
+or the copies installed from it can never learn about the second and do
+not start at login. So: implement, run the manual tests, add the five
+secrets, then `scripts/release.sh 0.1.0`.
