@@ -10,6 +10,7 @@
 mod controller;
 pub mod panel;
 pub mod status_item;
+mod window;
 
 use objc2::runtime::ProtocolObject;
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
