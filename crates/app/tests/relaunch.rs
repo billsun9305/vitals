@@ -4,7 +4,7 @@
 //! second is the only automated proof that the completion handler fires
 //! in a process that never runs `NSApplication`.
 
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 fn relaunch(parent: u32, app: &str) -> std::process::Output {
@@ -14,17 +14,41 @@ fn relaunch(parent: u32, app: &str) -> std::process::Output {
         .expect("run vitals relaunch")
 }
 
+/// Like `relaunch`, but returns the still-running child instead of blocking
+/// on it, so the caller can interleave waiting on the parent and the
+/// helper to prove an ordering between the two.
+fn spawn_relaunch(parent: u32, app: &str) -> std::process::Child {
+    Command::new(env!("CARGO_BIN_EXE_vitals"))
+        .args(["relaunch", "--parent", &parent.to_string(), "--app", app])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn vitals relaunch")
+}
+
 #[test]
 fn the_helper_waits_for_its_parent_before_doing_anything() {
-    let mut parent = Command::new("sleep").arg("0.5").spawn().unwrap();
+    // A 2s parent gives real separation from process-start-plus-dyld noise:
+    // a helper that never waited at all would still return in well under a
+    // second, so passing here can only mean it waited on the parent.
+    let mut parent = Command::new("sleep").arg("2").spawn().unwrap();
+    let helper = spawn_relaunch(parent.id(), "/nonexistent/Vitals.app");
     let started = Instant::now();
-    let out = relaunch(parent.id(), "/nonexistent/Vitals.app");
+
+    parent.wait().expect("wait for parent");
+    let parent_exited = Instant::now();
+
+    let out = helper.wait_with_output().expect("wait for helper");
+    let helper_returned = Instant::now();
     let took = started.elapsed();
-    let _ = parent.wait();
 
     assert!(
-        took >= Duration::from_millis(400),
-        "returned after {took:?}, before the parent exited"
+        helper_returned >= parent_exited,
+        "helper returned before the parent was observed to exit"
+    );
+    assert!(
+        took >= Duration::from_millis(1500),
+        "returned after {took:?}, too fast to have waited for a 2s parent"
     );
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
