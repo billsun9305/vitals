@@ -38,9 +38,10 @@ you report:
   the release published, not who published it. The download URL redirects
   to `objects.githubusercontent.com`, which is outside that prefix by
   design; the hash and the signature cover the bytes, not the host.
-- **The updater never executes anything it downloaded.** The new bundle is
-  swapped in with a rename and started by a helper that is our own,
-  already-running binary; no script, no installer package.
+- **The updater runs nothing from the download during installation** — no
+  script, no installer package. The new bundle is swapped in with a rename
+  and only started, by the app's own already-running helper, after the
+  checks above pass.
 - **The dashboard is embedded and served from the binary.** It fetches
   only its own relative `/api/*` endpoints. Any way to make it load or
   execute remote content is a vulnerability.
