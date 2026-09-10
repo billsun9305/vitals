@@ -1,6 +1,6 @@
 use clap::Parser;
 use vitals::cli::{self, Cli, Command};
-use vitals::{serve, tray, window};
+use vitals::{serve, tray, update, window};
 
 fn main() {
     let args = Cli::parse();
@@ -21,6 +21,7 @@ fn main() {
         Some(Command::Serve { port, no_open }) => serve::run(port, !no_open),
         Some(Command::Dashboard { port }) => serve::run_dashboard(port),
         Some(Command::Window { url, parent }) => window::run(&url, parent),
+        Some(Command::Relaunch { parent, app }) => update::relaunch::run(parent, &app),
         None => tray::run(),
     };
     if let Err(e) = result {

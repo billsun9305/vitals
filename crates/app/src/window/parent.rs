@@ -21,8 +21,9 @@ use std::thread;
 /// exactly like "it exited already."
 ///
 /// Split out from `watch` so a test can call it directly without going
-/// through `std::process::exit`.
-fn wait_for_exit(pid: u32) -> bool {
+/// through `std::process::exit`, and shared with `update::relaunch`, which
+/// waits on the tray the same way.
+pub(crate) fn wait_for_exit(pid: u32) -> bool {
     // SAFETY: `kqueue()` takes no arguments; its only failure mode is
     // returning -1, which is checked below before the descriptor is used
     // for anything.

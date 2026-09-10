@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use clap::{Parser, Subcommand};
 use vitals_core::host::{load_avg, uptime_s};
 use vitals_core::sample::sample_once;
@@ -106,6 +108,21 @@ pub enum Command {
         /// that process does, and "Quit Vitals" from the window quits it.
         #[arg(long)]
         parent: u32,
+    },
+    /// Wait for the tray that spawned this process to exit, then open the
+    /// bundle it just installed.
+    ///
+    /// Spawned by the in-app updater a moment before it swaps the bundle;
+    /// not meant to be run by hand, and hidden from `--help` for that
+    /// reason.
+    #[command(hide = true)]
+    Relaunch {
+        /// Pid of the tray to wait for.
+        #[arg(long)]
+        parent: u32,
+        /// The bundle to open once it is gone.
+        #[arg(long)]
+        app: PathBuf,
     },
 }
 

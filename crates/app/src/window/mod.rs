@@ -17,7 +17,7 @@
 //! `MainThreadMarker` discipline `tray` uses.
 
 mod frame;
-mod parent;
+pub(crate) mod parent;
 
 use std::cell::RefCell;
 

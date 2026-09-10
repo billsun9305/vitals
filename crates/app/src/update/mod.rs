@@ -11,4 +11,5 @@
 pub mod codesign;
 pub mod http;
 pub mod install;
+pub mod relaunch;
 pub mod release;
