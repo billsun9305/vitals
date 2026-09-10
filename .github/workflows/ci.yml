@@ -46,9 +46,11 @@ jobs:
       # The runner is a virtual machine: Apple Silicon underneath, but with
       # no IOReport CPU channels, so `macmon::Sampler::new` fails there. Tests
       # that sample real hardware begin with `vitals_core::skip_without_hardware!`
-      # and print `skipped:` here instead of failing; everything pure still runs.
+      # and return early instead of failing; everything pure still runs.
+      # `--nocapture` puts their `skipped:` lines in this log, so what did not
+      # run here is on the record rather than counted as a pass in silence.
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --workspace -- --nocapture
 
       - name: Bundle
         run: make bundle
