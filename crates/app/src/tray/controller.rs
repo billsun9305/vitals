@@ -215,20 +215,23 @@ define_class!(
     }
 
     unsafe impl NSWindowDelegate for Controller {
-        /// The red button or ⌘W, not app quit — that stays open (see
-        /// `quit:`) and is the standard meaning of ⌘Q from any window.
+        /// The red button or ⌘W — routed here because the main menu's
+        /// Window > Close item sends `performClose:` to the key window,
+        /// which is what actually triggers this delegate method (see
+        /// `Controller::new`'s main-menu setup). Not app quit, which stays
+        /// open (see `quit:`) and is the standard meaning of ⌘Q from any
+        /// window.
         ///
         /// `setReleasedWhenClosed(false)` means the window survives this as
-        /// an object; what must not survive is the page it was showing.
-        /// Blanking it is unconditional rather than relying on the page's
-        /// own `document.visibilityState` gating, because a closed window
-        /// is exactly the case this app's idle-cost promise cannot afford
-        /// to get wrong by assumption — see the report for what was
-        /// actually observed.
+        /// an object; what must not survive is the `WKWebView` and the
+        /// WebKit helper processes behind it, so `detach()` drops the view
+        /// outright rather than merely navigating it away — see
+        /// `window.rs`'s module doc for the measured cost of the
+        /// alternative.
         #[unsafe(method(windowWillClose:))]
         fn window_will_close(&self, _notification: &NSNotification) {
             if let Some(window) = self.ivars().dashboard_window.borrow().as_ref() {
-                window.blank();
+                window.detach();
             }
             // Mirrors the `setActivationPolicy(Regular)` in `show_window`:
             // the Dock tile exists only while the window does.
@@ -320,6 +323,91 @@ impl Controller {
         menu.setDelegate(Some(ProtocolObject::from_ref(&*this)));
         status_item.setMenu(Some(&menu));
 
+        // The main menu (distinct from the tray dropdown built above) is
+        // invisible while the app's activation policy is `Accessory` (see
+        // `tray::run`) and appears the instant `show_window` flips it to
+        // `Regular`, so it is built once here rather than lazily when the
+        // window first opens — nothing about it depends on the window
+        // existing yet. Without one, AppKit shows a bare "Vitals" title
+        // with nothing under it while the dashboard is frontmost, and
+        // because every ⌘-key equivalent is dispatched through the main
+        // menu, ⌘W/⌘Q/⌘C/⌘V/⌘A would all silently do nothing.
+        let main_menu = NSMenu::new(mtm);
+
+        // App menu: only Quit. Its own title is irrelevant — AppKit always
+        // renders the first top-level item's submenu under the running
+        // app's name, substituted automatically.
+        let app_menu_item = NSMenuItem::new(mtm);
+        let app_menu = NSMenu::new(mtm);
+        let quit_from_app_menu = NSMenuItem::new(mtm);
+        quit_from_app_menu.setTitle(&NSString::from_str("Quit Vitals"));
+        quit_from_app_menu.setKeyEquivalent(&NSString::from_str("q"));
+        // SAFETY: `this` responds to `quit:`, defined above — the same
+        // selector the tray dropdown's own Quit item uses.
+        unsafe {
+            quit_from_app_menu.setTarget(Some(&this));
+            quit_from_app_menu.setAction(Some(sel!(quit:)));
+        }
+        app_menu.addItem(&quit_from_app_menu);
+        app_menu_item.setSubmenu(Some(&app_menu));
+        main_menu.addItem(&app_menu_item);
+
+        // Edit menu: target `None` on every item, so these route through
+        // the responder chain to whatever is first responder — the
+        // `WKWebView`, whenever the dashboard window is key. Without an
+        // Edit menu present, AppKit never delivers these key equivalents to
+        // the web view at all, so ordinary text editing inside the
+        // dashboard (copying a metric, pasting into a search box) would be
+        // dead for as long as the window is open.
+        let edit_menu_item = NSMenuItem::new(mtm);
+        let edit_menu = NSMenu::new(mtm);
+        edit_menu.setTitle(&NSString::from_str("Edit"));
+        for (title, key, action) in [
+            ("Cut", "x", sel!(cut:)),
+            ("Copy", "c", sel!(copy:)),
+            ("Paste", "v", sel!(paste:)),
+            ("Select All", "a", sel!(selectAll:)),
+        ] {
+            let item = NSMenuItem::new(mtm);
+            item.setTitle(&NSString::from_str(title));
+            item.setKeyEquivalent(&NSString::from_str(key));
+            // SAFETY: no target is set, so this only registers the
+            // selector as the item's action; each one is a standard AppKit
+            // editing action that any responder may or may not implement,
+            // and a responder that doesn't simply isn't sent it.
+            unsafe { item.setAction(Some(action)) };
+            edit_menu.addItem(&item);
+        }
+        edit_menu_item.setSubmenu(Some(&edit_menu));
+        main_menu.addItem(&edit_menu_item);
+
+        // Window menu: also target `None`, and additionally registered
+        // with `setWindowsMenu` so AppKit manages the standard window list
+        // under it.
+        let window_menu_item = NSMenuItem::new(mtm);
+        let window_menu = NSMenu::new(mtm);
+        window_menu.setTitle(&NSString::from_str("Window"));
+        let close_item = NSMenuItem::new(mtm);
+        close_item.setTitle(&NSString::from_str("Close"));
+        close_item.setKeyEquivalent(&NSString::from_str("w"));
+        // SAFETY: see the Edit menu above — `performClose:` is one of
+        // NSWindow's own standard actions.
+        unsafe { close_item.setAction(Some(sel!(performClose:))) };
+        window_menu.addItem(&close_item);
+        let minimize_item = NSMenuItem::new(mtm);
+        minimize_item.setTitle(&NSString::from_str("Minimize"));
+        minimize_item.setKeyEquivalent(&NSString::from_str("m"));
+        // SAFETY: see above — `performMiniaturize:` is likewise one of
+        // NSWindow's own standard actions.
+        unsafe { minimize_item.setAction(Some(sel!(performMiniaturize:))) };
+        window_menu.addItem(&minimize_item);
+        window_menu_item.setSubmenu(Some(&window_menu));
+        main_menu.addItem(&window_menu_item);
+
+        let app = NSApplication::sharedApplication(mtm);
+        app.setMainMenu(Some(&main_menu));
+        app.setWindowsMenu(Some(&window_menu));
+
         this.observe_notifications();
         this.sync_timer();
         this
@@ -361,11 +449,13 @@ impl Controller {
             let delegate = ProtocolObject::from_ref(self);
             *slot = Some(DashboardWindow::new(mtm, url, delegate));
         } else if let Some(window) = slot.as_ref() {
-            // `is_visible` is false only after the user closed it (see
-            // `windowWillClose:`); reload what `blank()` cleared before
-            // bringing it back, rather than on every reopen.
-            if !window.is_visible() {
-                window.load(url);
+            // `has_web_view` is false only after the user closed the window
+            // (see `windowWillClose:`, which tears the view down);
+            // `NSWindow::isVisible` would also be false for a window the
+            // user merely minimised, which should be restored as-is, not
+            // reloaded — see `window.rs`.
+            if !window.has_web_view() {
+                window.load(mtm, url);
             }
         }
         if let Some(window) = slot.as_ref() {
