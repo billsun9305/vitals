@@ -32,7 +32,7 @@ Every task's requirements implicitly include this section.
 - **Exact asset contract** (§1): `Vitals-<version>-arm64.tar.gz` (exactly one top-level entry, `Vitals.app/`), `Vitals-<version>.dmg`, `SHA256SUMS` (`<hex>  <filename>`, two spaces); download URLs `https://github.com/billsun9305/vitals/releases/download/v<version>/<name>`.
 - **The feature exists only in a bundle:** when `NSBundle::mainBundle().bundleURL()` does not end in `.app`, no timers are created, no update or login items are added to the menu, and `register_once` is not called.
 - **`--update-source <url>`** is accepted only for `http://127.0.0.1:<port>/` and `http://localhost:<port>/` (trailing slash required); anything else is an error before AppKit starts.
-- **Never in a test:** launching an app, spawning `vitals relaunch`, touching `/Applications`, `~/Library/LaunchAgents`, `launchctl`, or the login item registry. Integration tests work on temporary bundles under `tempfile::tempdir()`.
+- **Never in a test:** launching an app, spawning `vitals relaunch` against a real bundle (the helper's own tests run it against paths that cannot be opened), touching `/Applications`, `~/Library/LaunchAgents`, `launchctl`, or the login item registry. Integration tests work on temporary bundles under `tempfile::tempdir()`.
 - **Secrets are never handled by tooling:** `scripts/release-secrets.sh` (already committed) is run by the maintainer. No task reads, prints or sets a certificate, password or key.
 - **Commit after every task**, `cargo fmt` first, using the message given in that task's final step, with the trailer `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`. `git add <paths>` only — never `git add -A`.
 
