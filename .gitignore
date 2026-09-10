@@ -8,9 +8,8 @@
 .DS_Store
 *.log
 
-# Release credentials live here and nowhere else in the tree: the exported
-# Developer ID certificate (.p12) and the App Store Connect API key (.p8)
-# that scripts/release-secrets.sh reads. Never committed, never uploaded.
-/.secrets/
+# Release credentials never enter the tree: an exported Developer ID
+# certificate (.p12) or an App Store Connect API key (.p8) placed here by
+# mistake stays uncommitted.
 *.p12
 *.p8

@@ -39,12 +39,12 @@ if ! security find-identity -v -p codesigning 2>/dev/null | grep -q "Developer I
   exit 1
 fi
 
-# The repository's git-ignored .secrets/ directory is where the two files
-# are kept between releases; each prompt defaults to the one file found
-# there, so a repeat run is four Returns and the .p12 password.
-secrets_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.secrets"
-default_p12="$(ls "$secrets_dir"/*.p12 2>/dev/null | head -1 || true)"
-default_p8="$(ls "$secrets_dir"/AuthKey_*.p8 2>/dev/null | head -1 || true)"
+# The two files stay wherever you keep them; each prompt defaults to the
+# newest match in the usual places, so a repeat run is mostly Returns and
+# the .p12 password. Nothing is copied anywhere.
+newest() { ls -t "$@" 2>/dev/null | head -1 || true; }
+default_p12="$(newest "$HOME"/Documents/*.p12 "$HOME"/Downloads/*.p12 "$HOME"/Desktop/*.p12)"
+default_p8="$(newest "$HOME"/Documents/AuthKey_*.p8 "$HOME"/Downloads/AuthKey_*.p8 "$HOME"/Desktop/AuthKey_*.p8)"
 
 read -rp "Path to the exported certificate (.p12) [${default_p12:-none}]: " p12
 p12="${p12:-$default_p12}"
