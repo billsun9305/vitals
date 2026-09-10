@@ -2,6 +2,7 @@ use std::process::Command;
 
 #[test]
 fn pressure_emits_a_verdict_with_a_summary_sentence() {
+    vitals_core::skip_without_hardware!();
     let out = Command::new(env!("CARGO_BIN_EXE_vitals"))
         .arg("pressure")
         .output()
@@ -28,6 +29,7 @@ fn pressure_emits_a_verdict_with_a_summary_sentence() {
 
 #[test]
 fn a_second_run_has_history_because_the_first_stored_a_baseline() {
+    vitals_core::skip_without_hardware!();
     let bin = env!("CARGO_BIN_EXE_vitals");
     Command::new(bin).arg("pressure").output().unwrap();
     let out = Command::new(bin).arg("pressure").output().unwrap();
@@ -37,6 +39,7 @@ fn a_second_run_has_history_because_the_first_stored_a_baseline() {
 
 #[test]
 fn exit_code_flag_reports_the_state() {
+    vitals_core::skip_without_hardware!();
     let out = Command::new(env!("CARGO_BIN_EXE_vitals"))
         .args(["pressure", "--exit-code"])
         .output()

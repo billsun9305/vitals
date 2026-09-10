@@ -52,6 +52,49 @@ pub fn sample_once(interval_ms: u32) -> Result<Sample, String> {
     SamplerSession::new()?.next(interval_ms)
 }
 
+/// Whether this Mac exposes the IOReport channels the sampler reads.
+///
+/// Every Apple Silicon Mac does. A virtual machine running on one — GitHub's
+/// macOS runners among them — does not: IOReport exists there, but the CPU
+/// frequency channels are missing, and `macmon::Sampler::new` fails with
+/// "No CPU frequencies found". Nothing that samples can work in that case,
+/// so tests that need real samples call [`skip_without_hardware!`] and
+/// return, leaving the pure tests to carry the suite on the runner.
+///
+/// Probed once per process and cached: `Sampler::new` costs about half a
+/// second, and every test binary would otherwise pay it per test.
+pub fn hardware_probe() -> Result<(), String> {
+    static PROBE: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
+    PROBE
+        .get_or_init(|| SamplerSession::new().map(|_| ()))
+        .clone()
+}
+
+/// Whether a sampler error means the machine has no IOReport CPU channels
+/// (a virtual machine), as opposed to a bug. Only this case is a reason to
+/// skip a test; anything else should fail loudly.
+pub fn is_missing_channels(err: &str) -> bool {
+    err.contains("No CPU frequencies found")
+}
+
+/// Return early from a test that needs real hardware when there is none —
+/// see [`hardware_probe`]. Prints why, so the run's output shows what was
+/// skipped instead of silently passing. Any other sampler failure panics
+/// with its message, because that is a bug, not an environment.
+#[macro_export]
+macro_rules! skip_without_hardware {
+    () => {
+        match $crate::sample::hardware_probe() {
+            Ok(()) => {}
+            Err(reason) if $crate::sample::is_missing_channels(&reason) => {
+                eprintln!("skipped: {reason} (no IOReport CPU channels; a virtual machine?)");
+                return;
+            }
+            Err(reason) => panic!("sampler failed: {reason}"),
+        }
+    };
+}
+
 use crate::cadence::Cadence;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::Arc;
@@ -152,7 +195,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn only_the_missing_channels_error_is_an_environment_not_a_bug() {
+        assert!(is_missing_channels(
+            "Sampler::new failed: No CPU frequencies found"
+        ));
+        assert!(!is_missing_channels(
+            "Sampler::new failed: IOReport: permission denied"
+        ));
+        assert!(!is_missing_channels(""));
+    }
+
+    #[test]
     fn sample_once_returns_a_plausible_sample() {
+        crate::skip_without_hardware!();
         let s = sample_once(150).expect("sampling failed");
         assert_eq!(s.sample_ms, 150);
         assert!(
@@ -169,6 +224,7 @@ mod tests {
 
     #[test]
     fn a_session_can_be_reused_without_rebuilding_the_sampler() {
+        crate::skip_without_hardware!();
         let mut session = SamplerSession::new().expect("Sampler::new failed");
         let a = session.next(100).expect("first sample failed");
         let b = session.next(100).expect("second sample failed");
@@ -183,6 +239,7 @@ mod tests {
 
     #[test]
     fn the_requested_interval_actually_gates_the_sample_window() {
+        crate::skip_without_hardware!();
         // Sample.sample_ms is a straight echo of the caller's argument, so
         // asserting on it proves only that the number survived the round
         // trip — a sampler that ignored interval_ms entirely and used a
@@ -230,6 +287,7 @@ mod tests {
     /// assertions.
     #[test]
     fn the_worker_delivers_samples_responds_to_cadence_and_parks() {
+        crate::skip_without_hardware!();
         use crate::cadence::TrayState;
         use std::time::Duration;
 

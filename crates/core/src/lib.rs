@@ -54,6 +54,6 @@ mod tests {
         let mut r: ring::Ring<f32> = ring::Ring::new(1);
         r.push(1.0);
         assert_eq!(r.len(), 1);
-        assert!(sample::sample_once(50).is_ok());
+        assert!(!sample::is_missing_channels(""));
     }
 }

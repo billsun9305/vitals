@@ -410,6 +410,7 @@ mod tests {
     /// "vitals is the likely cause" in 8 of 8 runs before the filter existed.
     #[test]
     fn the_measuring_process_is_never_its_own_suspect() {
+        vitals_core::skip_without_hardware!();
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let mut burners = Vec::new();
         for _ in 0..std::thread::available_parallelism().map_or(4, |n| n.get()) {

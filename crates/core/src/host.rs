@@ -58,6 +58,7 @@ mod tests {
 
     #[test]
     fn host_from_soc_reads_the_real_machine() {
+        crate::skip_without_hardware!();
         let sampler = crate::macmon_sampler_for_test();
         let soc = sampler.get_soc_info();
         let host = host_from_soc(soc, ncpu());

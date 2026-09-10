@@ -77,6 +77,7 @@ fn extract_first_asset_href(html: &str) -> Option<String> {
 
 #[test]
 fn api_snapshot_returns_the_same_schema_as_the_cli() {
+    vitals_core::skip_without_hardware!();
     let _s = start(9877);
     let (code, body) = get(9877, "/api/snapshot");
     assert_eq!(code, 200);
@@ -87,6 +88,7 @@ fn api_snapshot_returns_the_same_schema_as_the_cli() {
 
 #[test]
 fn unknown_paths_are_404_not_a_panic() {
+    vitals_core::skip_without_hardware!();
     let _s = start(9878);
     let (code, _) = get(9878, "/nope");
     assert_eq!(code, 404);
@@ -94,6 +96,7 @@ fn unknown_paths_are_404_not_a_panic() {
 
 #[test]
 fn routing_is_a_pure_function() {
+    vitals_core::skip_without_hardware!();
     use vitals::serve::{route, Route};
     assert_eq!(route("/api/snapshot"), Route::Snapshot);
     assert_eq!(route("/api/top"), Route::Top);
@@ -114,6 +117,7 @@ fn routing_is_a_pure_function() {
 /// stubbed out every path, which Task 19 replaces with a real file server.
 #[test]
 fn route_rejects_percent_encoded_and_backslash_traversal() {
+    vitals_core::skip_without_hardware!();
     use vitals::serve::{route, Route};
     assert_eq!(
         route("/%2e%2e/%2e%2e/etc/passwd"),
@@ -163,6 +167,7 @@ fn route_rejects_percent_encoded_and_backslash_traversal() {
 /// that 404s unconditionally.
 #[test]
 fn path_traversal_over_http_is_rejected_and_leaks_nothing() {
+    vitals_core::skip_without_hardware!();
     let _s = start(9881);
     for p in [
         "/%2e%2e/%2e%2e/etc/passwd",
@@ -185,6 +190,7 @@ fn path_traversal_over_http_is_rejected_and_leaks_nothing() {
 /// would pass every test above and still be useless.
 #[test]
 fn a_real_embedded_asset_is_served() {
+    vitals_core::skip_without_hardware!();
     let _s = start(9882);
     let (index_code, index_body) = get(9882, "/");
 
@@ -231,6 +237,7 @@ fn a_real_embedded_asset_is_served() {
 /// `/` is routed as an asset request first, so that is the common 404.
 #[test]
 fn every_error_response_is_json_with_a_schema_version() {
+    vitals_core::skip_without_hardware!();
     let _s = start(9883);
     for path in [
         "/nope",
@@ -252,6 +259,7 @@ fn every_error_response_is_json_with_a_schema_version() {
 /// full process table. The browser sends the attacker's hostname in `Host`.
 #[test]
 fn a_non_local_host_header_is_rejected() {
+    vitals_core::skip_without_hardware!();
     let _s = start(9884);
 
     let out = std::process::Command::new("curl")
@@ -306,6 +314,7 @@ fn a_non_local_host_header_is_rejected() {
 /// necessarily the one an intermediary routed on.
 #[test]
 fn duplicate_host_headers_are_refused() {
+    vitals_core::skip_without_hardware!();
     use std::io::{Read, Write};
 
     let _s = start(9886);

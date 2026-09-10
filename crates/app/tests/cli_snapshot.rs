@@ -16,6 +16,7 @@ fn run(args: &[&str]) -> serde_json::Value {
 
 #[test]
 fn snapshot_emits_the_documented_contract() {
+    vitals_core::skip_without_hardware!();
     let v = run(&["snapshot", "--interval", "150"]);
     assert_eq!(v["schema_version"], 1);
     assert_eq!(v["sample_ms"], 150);
@@ -55,6 +56,7 @@ fn snapshot_emits_the_documented_contract() {
 
 #[test]
 fn json_is_the_default_and_json_flag_is_a_no_op() {
+    vitals_core::skip_without_hardware!();
     let a = run(&["snapshot", "--interval", "120"]);
     let b = run(&["snapshot", "--interval", "120", "--json"]);
     assert_eq!(a["schema_version"], b["schema_version"]);
@@ -62,6 +64,7 @@ fn json_is_the_default_and_json_flag_is_a_no_op() {
 
 #[test]
 fn no_null_ever_appears_in_the_output() {
+    vitals_core::skip_without_hardware!();
     let out = Command::new(env!("CARGO_BIN_EXE_vitals"))
         .args(["snapshot", "--interval", "120"])
         .output()

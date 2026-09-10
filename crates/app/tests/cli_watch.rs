@@ -2,6 +2,7 @@ use std::process::Command;
 
 #[test]
 fn watch_emits_one_json_object_per_line_and_stops_at_count() {
+    vitals_core::skip_without_hardware!();
     let out = Command::new(env!("CARGO_BIN_EXE_vitals"))
         .args(["watch", "-i", "1", "-n", "3"])
         .output()
@@ -39,6 +40,7 @@ fn watch_emits_one_json_object_per_line_and_stops_at_count() {
 /// wrong rate, and every other assertion here would still pass.
 #[test]
 fn watch_honors_the_requested_interval() {
+    vitals_core::skip_without_hardware!();
     use std::io::{BufRead, BufReader};
     use std::process::Stdio;
     use std::time::Instant;

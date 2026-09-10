@@ -28,6 +28,14 @@ make fmt     # cargo fmt --all
 `make lint` must be clean, not merely free of hard errors: CI runs clippy
 with `-D warnings`.
 
+CI runs on GitHub's `macos-15` runners, which are virtual machines: Apple
+Silicon underneath, but with no IOReport CPU channels, so the sampler cannot
+be built there. Tests that need a real sample begin with
+`vitals_core::skip_without_hardware!()` and print `skipped:` on the runner
+instead of failing. So CI proves the pure half of the suite and the build;
+the sampling half only runs on a real Mac. Run `make test` locally before
+merging anything that touches the sampler, the CLI verbs or the server.
+
 The dashboard is embedded into the binary at build time:
 
 ```bash
