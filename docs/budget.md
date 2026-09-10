@@ -269,6 +269,21 @@ web view. Net: a tray that had shown the dashboard once carried ~62 MB
 more than one that never had, for the rest of its life. That is the one
 number this product exists to keep small, so the window moved out of the
 tray into a `vitals window` child process that LaunchServices launches
-and that exits when its window closes. Its measurements will be added
-here when it lands.
+and that exits when its window closes.
+
+Measured the same way on that design (test instances launched by path,
+`footprint -p`):
+
+| | Never opened | Window open | After close |
+|---|---|---|---|
+| Tray process | 18 MB | 17 MB | 17 MB |
+| WebKit helpers | — | GPU + Networking + WebContent, owned by the window process | none |
+| Sockets to :9876 after close | — | — | only the listener |
+
+The tray's footprint does not move because it never touches AppKit's window
+or web-view machinery; the ~90 MB the dashboard genuinely costs while open
+is paid by a process that exists only while the window does. The window
+process exits within ~11 ms of the tray dying (kqueue `NOTE_EXIT` on the
+parent pid — one wakeup, no polling), and a second "Open Dashboard" while
+it is up re-fronts it rather than launching a second copy.
 

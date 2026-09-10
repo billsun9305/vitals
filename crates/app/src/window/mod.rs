@@ -228,6 +228,9 @@ impl WindowApp {
             parent,
         };
         let this = Self::alloc(mtm).set_ivars(ivars);
+        // SAFETY: `init` on a freshly allocated `NSObject` subclass whose
+        // ivars were just set is the designated initializer with no
+        // further requirements.
         let this: Retained<Self> = unsafe { msg_send![super(this), init] };
         this
     }

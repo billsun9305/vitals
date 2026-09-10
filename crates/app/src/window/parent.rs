@@ -31,6 +31,9 @@ fn wait_for_exit(pid: u32) -> bool {
         return false;
     }
 
+    // SAFETY: `kevent` is a plain C struct of integers and pointers, for
+    // which all-zero is a valid (if meaningless) value; every field that
+    // matters is set below before the struct is handed to the kernel.
     let mut change: libc::kevent = unsafe { std::mem::zeroed() };
     change.ident = pid as libc::uintptr_t;
     change.filter = libc::EVFILT_PROC;
@@ -51,6 +54,7 @@ fn wait_for_exit(pid: u32) -> bool {
         return false;
     }
 
+    // SAFETY: as above — an all-zero `kevent` is a valid output slot.
     let mut event: libc::kevent = unsafe { std::mem::zeroed() };
     // SAFETY: `kq` is valid and has the registration above pending on it;
     // `event` is a single output slot for `kevent` to fill; a null timeout

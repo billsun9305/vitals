@@ -113,6 +113,13 @@ impl DashboardWindow {
             )
         };
         window.setTitle(&NSString::from_str(TITLE));
+        // SAFETY: this process holds the window in a `Retained` until it
+        // exits; AppKit's default of also releasing a window when it closes
+        // would drop that ownership out from under the `Retained` and make
+        // any later touch (a `front()` from a late activation, say) a
+        // use-after-free. Not for reopening — the process exits on close —
+        // purely so the two owners agree.
+        unsafe { window.setReleasedWhenClosed(false) };
         // Restores wherever the user last left it; must run after the
         // centred `content_rect` above, which is only the seed for a
         // machine with no saved frame yet.

@@ -348,12 +348,16 @@ top-right of the screen. Two things open the dashboard from it:
 
 The dashboard opens in a **native window** — a `WKWebView` inside an
 `NSWindow`, not a browser tab — 1000×760 the first time, then wherever you
-last left it. While it is open the app has a Dock tile and an app menu, so
-⌘W closes the window and ⌘Q quits; both go away again when the window
-closes, and closing tears the web view down rather than hiding it. What a
-closed window still costs is measured in `docs/budget.md`; moving the
-window into its own process is the next change. `vitals dashboard` from a
-terminal opens the same page in your default browser.
+last left it. The window is its own process (`vitals window`, launched by
+the tray through LaunchServices and hidden from `--help`): while it is open
+it has a Dock tile and an app menu, ⌘W closes it and ⌘Q quits Vitals
+entirely, and when it closes the process exits. That is what keeps a closed
+dashboard at zero: WebKit's helper processes, the sockets and the page all
+belong to the window process and go with it, and the tray never hosts a
+web view at all — its footprint is the same 17 MB before, during and after.
+If the tray quits or crashes, the window notices (a kqueue watch on the
+parent, no polling) and exits within milliseconds. `vitals dashboard` from
+a terminal still opens the same page in your default browser.
 
 Either way the server runs **inside the tray process**, not as a child, so
 quitting vitals takes the dashboard down with it and nothing is left
