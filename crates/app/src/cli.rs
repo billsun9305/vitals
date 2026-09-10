@@ -92,6 +92,21 @@ pub enum Command {
         #[arg(long, default_value_t = crate::serve::DEFAULT_PORT)]
         port: u16,
     },
+    /// Host the dashboard in a native window.
+    ///
+    /// Spawned by the menu bar app, which owns the server the window talks
+    /// to; not meant to be run by hand, and hidden from `--help` for that
+    /// reason.
+    #[command(hide = true)]
+    Window {
+        /// The dashboard URL to load, e.g. http://127.0.0.1:9876/.
+        #[arg(long)]
+        url: String,
+        /// Pid of the tray that spawned this window; the window exits when
+        /// that process does, and "Quit Vitals" from the window quits it.
+        #[arg(long)]
+        parent: u32,
+    },
 }
 
 /// Collect a snapshot with every field populated.

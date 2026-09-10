@@ -19,13 +19,14 @@ serde_json.workspace = true
 clap.workspace = true
 tiny_http.workspace = true
 include_dir = "0.7"
+libc.workspace = true
 objc2.workspace = true
 objc2-foundation.workspace = true
 objc2-app-kit = { workspace = true, features = [
   "NSStatusBar", "NSStatusItem", "NSStatusBarButton", "NSButton", "NSControl",
   "NSResponder", "NSView", "NSMenu", "NSMenuItem", "NSApplication", "NSFont",
   "NSColor", "NSWorkspace", "NSGraphics", "NSBezierPath", "NSGraphicsContext",
-  "NSWindow", "NSScreen",
+  "NSWindow", "NSScreen", "NSRunningApplication",
 ] }
 # Full default features (the crate's own huge DOM/legacy-WebKit surface
 # included): these are extern declarations resolved against the system's
@@ -34,6 +35,11 @@ objc2-app-kit = { workspace = true, features = [
 # subset — see objc2-app-kit and objc2-foundation above, which take the same
 # shortcut for the same reason.
 objc2-web-kit.workspace = true
+# The completion handler for `NSWorkspace`'s launch API (`tray/child.rs`) is
+# an Objective-C block; objc2-app-kit already depends on this optional to
+# build that method's signature, but constructing one ourselves needs it as
+# a direct dependency too.
+block2.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

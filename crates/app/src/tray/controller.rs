@@ -28,9 +28,9 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadOnly};
 use objc2_app_kit::{
-    NSAlert, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSFont, NSMenu,
-    NSMenuDelegate, NSMenuItem, NSStatusBar, NSStatusItem, NSWindowDelegate, NSWorkspace,
-    NSWorkspaceScreensDidSleepNotification, NSWorkspaceScreensDidWakeNotification,
+    NSAlert, NSApplication, NSApplicationDelegate, NSFont, NSMenu, NSMenuDelegate, NSMenuItem,
+    NSStatusBar, NSStatusItem, NSWorkspace, NSWorkspaceScreensDidSleepNotification,
+    NSWorkspaceScreensDidWakeNotification,
 };
 use objc2_foundation::{
     MainThreadMarker, NSNotification, NSNotificationCenter,
@@ -46,9 +46,9 @@ use vitals_core::schema::{build_snapshot, now_rfc3339, Snapshot, SnapshotInputs}
 use vitals_core::sysctl::mem_pressure_level;
 use vitals_core::thermal::{low_power_mode, on_battery, thermal_state};
 
+use super::child::DashboardProcess;
 use super::panel::PanelView;
 use super::status_item::format_title;
-use super::window::DashboardWindow;
 
 /// `NSVariableStatusItemLength`. objc2-app-kit 0.3 does not re-export the
 /// AppKit constant, so it is spelled out here.
@@ -89,10 +89,9 @@ pub struct Ivars {
     timer_period_ms: Cell<Option<u32>>,
     /// Latch for a worker that will never produce another sample.
     sampler_dead: Cell<bool>,
-    /// The dashboard window, built lazily on the first `show_dashboard` and
-    /// kept for the rest of the run — see `window`'s module doc for why
-    /// closing it never tears it down.
-    dashboard_window: RefCell<Option<DashboardWindow>>,
+    /// Launches and re-fronts the dashboard's own window process — see
+    /// `child`'s module doc.
+    dashboard: DashboardProcess,
 }
 
 define_class!(
@@ -213,33 +212,6 @@ define_class!(
             self.ivars().panel.clear_history();
         }
     }
-
-    unsafe impl NSWindowDelegate for Controller {
-        /// The red button or ⌘W — routed here because the main menu's
-        /// Window > Close item sends `performClose:` to the key window,
-        /// which is what actually triggers this delegate method (see
-        /// `Controller::new`'s main-menu setup). Not app quit, which stays
-        /// open (see `quit:`) and is the standard meaning of ⌘Q from any
-        /// window.
-        ///
-        /// `setReleasedWhenClosed(false)` means the window survives this as
-        /// an object; what must not survive is the `WKWebView` and the
-        /// WebKit helper processes behind it, so `detach()` drops the view
-        /// outright rather than merely navigating it away — see
-        /// `window.rs`'s module doc for the measured cost of the
-        /// alternative.
-        #[unsafe(method(windowWillClose:))]
-        fn window_will_close(&self, _notification: &NSNotification) {
-            if let Some(window) = self.ivars().dashboard_window.borrow().as_ref() {
-                window.detach();
-            }
-            // Mirrors the `setActivationPolicy(Regular)` in `show_window`:
-            // the Dock tile exists only while the window does.
-            let mtm = MainThreadMarker::from(self);
-            NSApplication::sharedApplication(mtm)
-                .setActivationPolicy(NSApplicationActivationPolicy::Accessory);
-        }
-    }
 );
 
 impl Controller {
@@ -292,7 +264,7 @@ impl Controller {
             timer: RefCell::new(None),
             timer_period_ms: Cell::new(None),
             sampler_dead: Cell::new(false),
-            dashboard_window: RefCell::new(None),
+            dashboard: DashboardProcess::new(),
         };
 
         let this = Self::alloc(mtm).set_ivars(ivars);
@@ -323,160 +295,32 @@ impl Controller {
         menu.setDelegate(Some(ProtocolObject::from_ref(&*this)));
         status_item.setMenu(Some(&menu));
 
-        // The main menu (distinct from the tray dropdown built above) is
-        // invisible while the app's activation policy is `Accessory` (see
-        // `tray::run`) and appears the instant `show_window` flips it to
-        // `Regular`, so it is built once here rather than lazily when the
-        // window first opens — nothing about it depends on the window
-        // existing yet. Without one, AppKit shows a bare "Vitals" title
-        // with nothing under it while the dashboard is frontmost, and
-        // because every ⌘-key equivalent is dispatched through the main
-        // menu, ⌘W/⌘Q/⌘C/⌘V/⌘A would all silently do nothing.
-        let main_menu = NSMenu::new(mtm);
-
-        // App menu: only Quit. Its own title is irrelevant — AppKit always
-        // renders the first top-level item's submenu under the running
-        // app's name, substituted automatically.
-        let app_menu_item = NSMenuItem::new(mtm);
-        let app_menu = NSMenu::new(mtm);
-        let quit_from_app_menu = NSMenuItem::new(mtm);
-        quit_from_app_menu.setTitle(&NSString::from_str("Quit Vitals"));
-        quit_from_app_menu.setKeyEquivalent(&NSString::from_str("q"));
-        // SAFETY: `this` responds to `quit:`, defined above — the same
-        // selector the tray dropdown's own Quit item uses.
-        unsafe {
-            quit_from_app_menu.setTarget(Some(&this));
-            quit_from_app_menu.setAction(Some(sel!(quit:)));
-        }
-        app_menu.addItem(&quit_from_app_menu);
-        app_menu_item.setSubmenu(Some(&app_menu));
-        main_menu.addItem(&app_menu_item);
-
-        // Edit menu: target `None` on every item, so these route through
-        // the responder chain to whatever is first responder — the
-        // `WKWebView`, whenever the dashboard window is key. Without an
-        // Edit menu present, AppKit never delivers these key equivalents to
-        // the web view at all, so ordinary text editing inside the
-        // dashboard (copying a metric, pasting into a search box) would be
-        // dead for as long as the window is open.
-        let edit_menu_item = NSMenuItem::new(mtm);
-        let edit_menu = NSMenu::new(mtm);
-        edit_menu.setTitle(&NSString::from_str("Edit"));
-        for (title, key, action) in [
-            ("Cut", "x", sel!(cut:)),
-            ("Copy", "c", sel!(copy:)),
-            ("Paste", "v", sel!(paste:)),
-            ("Select All", "a", sel!(selectAll:)),
-        ] {
-            let item = NSMenuItem::new(mtm);
-            item.setTitle(&NSString::from_str(title));
-            item.setKeyEquivalent(&NSString::from_str(key));
-            // SAFETY: no target is set, so this only registers the
-            // selector as the item's action; each one is a standard AppKit
-            // editing action that any responder may or may not implement,
-            // and a responder that doesn't simply isn't sent it.
-            unsafe { item.setAction(Some(action)) };
-            edit_menu.addItem(&item);
-        }
-        edit_menu_item.setSubmenu(Some(&edit_menu));
-        main_menu.addItem(&edit_menu_item);
-
-        // Window menu: also target `None`, and additionally registered
-        // with `setWindowsMenu` so AppKit manages the standard window list
-        // under it.
-        let window_menu_item = NSMenuItem::new(mtm);
-        let window_menu = NSMenu::new(mtm);
-        window_menu.setTitle(&NSString::from_str("Window"));
-        let close_item = NSMenuItem::new(mtm);
-        close_item.setTitle(&NSString::from_str("Close"));
-        close_item.setKeyEquivalent(&NSString::from_str("w"));
-        // SAFETY: see the Edit menu above — `performClose:` is one of
-        // NSWindow's own standard actions.
-        unsafe { close_item.setAction(Some(sel!(performClose:))) };
-        window_menu.addItem(&close_item);
-        let minimize_item = NSMenuItem::new(mtm);
-        minimize_item.setTitle(&NSString::from_str("Minimize"));
-        minimize_item.setKeyEquivalent(&NSString::from_str("m"));
-        // SAFETY: see above — `performMiniaturize:` is likewise one of
-        // NSWindow's own standard actions.
-        unsafe { minimize_item.setAction(Some(sel!(performMiniaturize:))) };
-        window_menu.addItem(&minimize_item);
-        window_menu_item.setSubmenu(Some(&window_menu));
-        main_menu.addItem(&window_menu_item);
-
-        let app = NSApplication::sharedApplication(mtm);
-        app.setMainMenu(Some(&main_menu));
-        app.setWindowsMenu(Some(&window_menu));
-
         this.observe_notifications();
         this.sync_timer();
         this
     }
 
-    /// Start the dashboard if it is not up, then show it in our own window.
+    /// Start the dashboard server if it is not up, then launch or re-front
+    /// the window that shows it.
     ///
     /// Runs on the main thread. `ensure_running` is loopback-only and
     /// measured at ~4ms cold (starting a server) and ~0.5ms warm (one
     /// already up), so it can block the main thread — and its failure needs
-    /// an alert, which must be on the main thread anyway. Unlike the old
-    /// browser path, showing the window itself is also main-thread work
-    /// (it touches AppKit), so nothing here goes to a background thread.
+    /// an alert, which must be on the main thread anyway. Showing the
+    /// dashboard is no longer AppKit work this process does at all: it
+    /// launches (or re-fronts) a separate `vitals window` process that owns
+    /// its own `WKWebView`, so the tray's own activation policy and menu
+    /// bar never change again — see `child`'s module doc.
     fn show_dashboard(&self) {
         let mtm = MainThreadMarker::from(self);
-        match crate::serve::ensure_running(crate::serve::DEFAULT_PORT) {
-            Ok(addr) => self.show_window(mtm, &format!("http://{addr}/")),
-            Err(e) => {
-                let alert = NSAlert::new(mtm);
-                alert.setMessageText(&NSString::from_str("Cannot open the dashboard"));
-                alert.setInformativeText(&NSString::from_str(&e));
-                alert.runModal();
-            }
+        let result = crate::serve::ensure_running(crate::serve::DEFAULT_PORT)
+            .and_then(|addr| self.ivars().dashboard.show(mtm, &format!("http://{addr}/")));
+        if let Err(e) = result {
+            let alert = NSAlert::new(mtm);
+            alert.setMessageText(&NSString::from_str("Cannot open the dashboard"));
+            alert.setInformativeText(&NSString::from_str(&e));
+            alert.runModal();
         }
-    }
-
-    /// Create the dashboard window on first use, or reload and front an
-    /// existing one, then bring the app forward.
-    ///
-    /// Creating and loading happen before the app is made `Regular`: an
-    /// `LSUIElement` app has no Dock tile until then, so flipping the
-    /// policy first would still leave nothing for the user to click while
-    /// the window comes up. The reverse order — window ready, then
-    /// forward — is what makes the transition read as "a window appeared",
-    /// not "a Dock icon appeared, then eventually a window".
-    fn show_window(&self, mtm: MainThreadMarker, url: &str) {
-        let mut slot = self.ivars().dashboard_window.borrow_mut();
-        if slot.is_none() {
-            let delegate = ProtocolObject::from_ref(self);
-            *slot = Some(DashboardWindow::new(mtm, url, delegate));
-        } else if let Some(window) = slot.as_ref() {
-            // `has_web_view` is false only after the user closed the window
-            // (see `windowWillClose:`, which tears the view down);
-            // `NSWindow::isVisible` would also be false for a window the
-            // user merely minimised, which should be restored as-is, not
-            // reloaded — see `window.rs`.
-            if !window.has_web_view() {
-                window.load(mtm, url);
-            }
-        }
-        if let Some(window) = slot.as_ref() {
-            window.front();
-        }
-        drop(slot);
-
-        // `LSUIElement` apps have no Dock tile or app-switcher entry by
-        // default; without this the window opens behind everything with no
-        // way to find it. Paired with `windowWillClose:` restoring
-        // `Accessory`, the Dock icon exists only while the window does.
-        let app = NSApplication::sharedApplication(mtm);
-        app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
-        // `activate` (no `ignoringOtherApps` argument) is the macOS-14+
-        // replacement for `activateIgnoringOtherApps(true)`, which
-        // `objc2-app-kit` 0.3.2 already flags deprecated; `Info.plist`
-        // already requires 14.0 (`LSMinimumSystemVersion`), so there is no
-        // older-OS case to fall back for. Behaviourally it is the same
-        // request the brief asked for: come forward even if another app is
-        // currently active.
-        app.activate();
     }
 
     /// Register for the cadence-changing events that have notifications.
