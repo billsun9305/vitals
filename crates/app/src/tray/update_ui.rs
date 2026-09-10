@@ -310,7 +310,10 @@ impl Controller {
             .borrow_mut()
             .apply(outcome.clone(), Instant::now());
         self.refresh_title();
-        if let Some(release) = self.ivars().update.pending_install.borrow_mut().take() {
+        // Bound to a `let` so the `RefMut` is released before `start_install`
+        // runs — it may touch the same cell.
+        let pending = self.ivars().update.pending_install.borrow_mut().take();
+        if let Some(release) = pending {
             self.start_install(release);
             return;
         }
@@ -382,11 +385,11 @@ impl Controller {
             InstallAction::Blocked => return,
             InstallAction::Defer => {
                 *self.ivars().update.pending_install.borrow_mut() = Some(release);
-                if let Some(items) = self.ivars().update.items.as_ref() {
-                    items.row.setAttributedTitle(None);
-                    items.row.setTitle(&NSString::from_str("Installing…"));
-                    items.row.setEnabled(false);
-                }
+                // The row reads *Installing…* and is disabled from here on,
+                // including on the next `menuWillOpen:`, so the click is
+                // visibly honoured and cannot be re-issued (or "Later"-ed)
+                // while it waits for the check to land.
+                self.refresh_update_items();
                 return;
             }
             InstallAction::Start => {}
@@ -433,6 +436,8 @@ impl Controller {
             return;
         };
         let state = self.ivars().update.state.borrow();
+        // A release parked behind an in-flight check is an install too.
+        let installing = state.installing || self.ivars().update.pending_install.borrow().is_some();
         let present = menu.indexOfItem(&items.row) >= 0;
         match (&state.available, present) {
             (Some(release), _) => {
@@ -440,7 +445,7 @@ impl Controller {
                     menu.insertItem_atIndex(&items.row_separator, 0);
                     menu.insertItem_atIndex(&items.row, 0);
                 }
-                if state.installing {
+                if installing {
                     items.row.setAttributedTitle(None);
                     items.row.setTitle(&NSString::from_str("Installing…"));
                     items.row.setEnabled(false);
@@ -468,7 +473,7 @@ impl Controller {
         items.check.setTitle(&NSString::from_str(title));
         // Disabled during an install too (ledger #101): a click here while
         // installing would start a second, overlapping check.
-        items.check.setEnabled(!state.checking && !state.installing);
+        items.check.setEnabled(!state.checking && !installing);
     }
 
     /// The *Start at Login* row, from the live registration.

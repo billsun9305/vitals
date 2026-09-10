@@ -335,7 +335,14 @@ mod tests {
 
     #[test]
     fn current_version_is_the_crate_version() {
-        assert_eq!(Version::current().to_string(), env!("CARGO_PKG_VERSION"));
+        // A prefix, not equality: a pre-release crate version such as
+        // `0.2.0-beta.1` reports its base `0.2.0` (see `from_crate_version`).
+        let crate_version = env!("CARGO_PKG_VERSION");
+        let current = Version::current().to_string();
+        assert!(
+            crate_version.starts_with(&current),
+            "{current} is not the base of {crate_version}"
+        );
     }
 
     #[test]
