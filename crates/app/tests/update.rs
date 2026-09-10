@@ -95,6 +95,29 @@ fn has_quarantine(path: &Path) -> bool {
     n >= 0
 }
 
+/// (I5) Give `path` a `com.apple.quarantine` attribute shaped like the one
+/// a DMG-installed `/Applications/Vitals.app` would carry, so
+/// `a_good_release_replaces_the_installed_bundle` can prove `swap_into`
+/// does not let it survive onto the replacement.
+fn set_quarantine(path: &Path) {
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    let value = b"0083;00000000;Safari;";
+    // SAFETY: `path` and the attribute name are valid, NUL-terminated
+    // strings; `value` is a valid buffer of the given length.
+    let rc = unsafe {
+        libc::setxattr(
+            path.as_ptr(),
+            c"com.apple.quarantine".as_ptr(),
+            value.as_ptr().cast(),
+            value.len(),
+            0,
+            0,
+        )
+    };
+    assert_eq!(rc, 0, "setxattr(com.apple.quarantine) failed");
+}
+
 /// Every file under `dir` with its bytes, sorted, for "unchanged" checks.
 fn snapshot(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
     fn walk(dir: &Path, out: &mut Vec<(PathBuf, Vec<u8>)>) {
@@ -267,6 +290,14 @@ fn a_good_release_replaces_the_installed_bundle() {
     let staging_dir = staged.dir().to_path_buf();
     assert!(staging_dir.exists());
     assert_eq!(plist_version(staged.app()), NEW);
+
+    // (I5) A DMG-installed original carries com.apple.quarantine; the
+    // swap must not let `replaceItemAtURL` merge it onto the replacement.
+    set_quarantine(&installed);
+    assert!(
+        has_quarantine(&installed),
+        "test setup: quarantine flag did not take on the installed fixture"
+    );
 
     staged.swap_into(&installed).unwrap();
 

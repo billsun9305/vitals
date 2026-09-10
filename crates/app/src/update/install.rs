@@ -67,7 +67,14 @@ impl Staged {
                 &original,
                 &replacement,
                 None,
-                NSFileManagerItemReplacementOptions::empty(),
+                // `UsingNewMetadataOnly`, not `empty()` (I5): Apple documents
+                // the default (`0`) as preserving/merging the *original*
+                // item's metadata. An `/Applications/Vitals.app` installed
+                // from the DMG carries `com.apple.quarantine`; merging that
+                // onto the freshly-downloaded, hash- and signature-verified
+                // bundle would defeat the no-quarantine promise (spec §4)
+                // for a property nothing in the tarball itself carries.
+                NSFileManagerItemReplacementOptions::UsingNewMetadataOnly,
                 None,
             )
             .map_err(|e| {
