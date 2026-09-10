@@ -1,5 +1,10 @@
 BIN := target/release/vitals
-PREFIX ?= /usr/local
+# Where the `vitals` symlink goes. $(HOME)/.local/bin needs no sudo;
+# `make install PREFIX=/usr/local` if you'd rather have it there.
+PREFIX ?= $(HOME)/.local
+APP := /Applications/Vitals.app
+# Left behind by installs older than the login-item registration.
+LAUNCH_AGENT := $(HOME)/Library/LaunchAgents/com.billsun.vitals.plist
 
 .PHONY: build test test-perf install uninstall fmt lint dashboard bundle install-app uninstall-app
 
@@ -51,35 +56,33 @@ install: build
 uninstall:
 	rm -f $(PREFIX)/bin/vitals
 
-# Packages target/release/vitals into dist/Vitals.app: an ad-hoc-signed,
-# LSUIElement app bundle (no Dock icon, no app switcher entry). See
-# scripts/bundle.sh for the signing rationale.
+# Packages target/release/vitals into dist/Vitals.app: an LSUIElement app
+# bundle (no Dock icon, no app switcher entry), ad-hoc signed unless
+# SIGN_IDENTITY names a codesign identity. See scripts/bundle.sh.
 bundle: build
 	./scripts/bundle.sh
 
-# Installs the bundle to /Applications, registers the LaunchAgent so the
-# tray starts at login, and symlinks $(PREFIX)/bin/vitals to the bundled
-# binary (overwriting the `install` target's symlink to the raw build
-# output, if that was used first -- both ultimately point at the same
-# vitals binary, just reached through different paths).
+# Installs the bundle to /Applications, symlinks $(PREFIX)/bin/vitals to
+# the bundled binary, and opens the app, which registers itself as a login
+# item on its first bundled launch (crates/app/src/tray/login_item.rs). A
+# running tray is quit first, or `open` would only re-front the old one. A
+# LaunchAgent left by an older install is unloaded and removed so the tray
+# is not started twice at login.
 install-app: bundle
-# Create both destination directories first, so a machine missing either one
-# fails here rather than half-way through. Neither is guaranteed to exist:
-# ~/Library/LaunchAgents is absent until a user installs their first agent,
-# and /usr/local/bin is absent on a clean macOS install. Without this the
-# target could copy the app and load the agent and only then fail on the
-# symlink, leaving a partial install that `uninstall-app` is not obviously
-# the fix for.
-	install -d ~/Library/LaunchAgents "$(PREFIX)/bin"
-	rm -rf /Applications/Vitals.app
+	install -d "$(PREFIX)/bin"
+	-killall vitals 2>/dev/null
+	rm -rf "$(APP)"
 	cp -R dist/Vitals.app /Applications/
-	cp resources/com.billsun.vitals.plist ~/Library/LaunchAgents/
-	launchctl unload ~/Library/LaunchAgents/com.billsun.vitals.plist 2>/dev/null || true
-	launchctl load ~/Library/LaunchAgents/com.billsun.vitals.plist
-	ln -sf /Applications/Vitals.app/Contents/MacOS/vitals $(PREFIX)/bin/vitals
+	ln -sf "$(APP)/Contents/MacOS/vitals" "$(PREFIX)/bin/vitals"
+	if [ -f "$(LAUNCH_AGENT)" ]; then launchctl unload "$(LAUNCH_AGENT)" 2>/dev/null; rm -f "$(LAUNCH_AGENT)"; fi
+	open "$(APP)"
+	@echo "installed $(APP); $(PREFIX)/bin/vitals -> $(APP)/Contents/MacOS/vitals"
 
+# Turns the login item off from the installed bundle (the registration
+# names that bundle, so its own binary must do it), quits the tray, and
+# removes the bundle and the symlink.
 uninstall-app:
-	launchctl unload ~/Library/LaunchAgents/com.billsun.vitals.plist 2>/dev/null || true
-	rm -f ~/Library/LaunchAgents/com.billsun.vitals.plist
-	rm -rf /Applications/Vitals.app
-	rm -f $(PREFIX)/bin/vitals
+	-"$(APP)/Contents/MacOS/vitals" login-item off 2>/dev/null
+	-killall vitals 2>/dev/null
+	rm -rf "$(APP)"
+	rm -f "$(PREFIX)/bin/vitals"

@@ -132,6 +132,26 @@ pub enum Command {
         #[arg(long)]
         app: PathBuf,
     },
+    /// Manage this bundle's Start at Login registration.
+    ///
+    /// Used by `make uninstall-app` and the manual test in CONTRIBUTING.md;
+    /// hidden from `--help`. Only meaningful when run from the installed
+    /// bundle's own binary.
+    #[command(hide = true)]
+    LoginItem {
+        #[command(subcommand)]
+        action: LoginItemAction,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoginItemAction {
+    /// Register the bundle as a login item.
+    On,
+    /// Remove the registration.
+    Off,
+    /// Print `enabled`, `not-registered`, `requires-approval` or `not-found`.
+    Status,
 }
 
 /// Collect a snapshot with every field populated.
@@ -427,6 +447,24 @@ pub fn run_watch(interval_s: u64, count: u64) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn login_item_is_a_hidden_verb_with_three_actions() {
+        use clap::CommandFactory;
+        for (word, action) in [
+            ("on", LoginItemAction::On),
+            ("off", LoginItemAction::Off),
+            ("status", LoginItemAction::Status),
+        ] {
+            let cli = Cli::try_parse_from(["vitals", "login-item", word]).unwrap();
+            assert!(matches!(cli.command, Some(Command::LoginItem { action: a }) if a == action));
+        }
+        assert!(Cli::try_parse_from(["vitals", "login-item"]).is_err());
+        assert!(!Cli::command()
+            .render_help()
+            .to_string()
+            .contains("login-item"));
+    }
 
     #[test]
     fn update_source_defaults_to_github_and_accepts_only_loopback() {

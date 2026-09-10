@@ -22,6 +22,7 @@ fn main() {
         Some(Command::Dashboard { port }) => serve::run_dashboard(port),
         Some(Command::Window { url, parent }) => window::run(&url, parent),
         Some(Command::Relaunch { parent, app }) => update::relaunch::run(parent, &app),
+        Some(Command::LoginItem { action }) => tray::login_item::run(action),
         None => match cli::update_source(args.update_source) {
             Ok(source) => tray::run(source),
             Err(e) => Err(e),

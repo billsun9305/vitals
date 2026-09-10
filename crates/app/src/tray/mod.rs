@@ -9,6 +9,7 @@
 
 mod child;
 mod controller;
+pub mod login_item;
 pub mod panel;
 pub mod status_item;
 mod update_ui;
@@ -31,6 +32,11 @@ pub fn run(source: Source) -> ! {
     // Held for the lifetime of the run loop: the status item, the menu
     // delegate and the notification centre all reference it unretained.
     let controller = controller::Controller::new(mtm, source);
+    // A bundled launch enrols itself as a login item, once; the status item
+    // already exists, so a slow ServiceManagement call cannot delay it.
+    if update_ui::is_bundled() {
+        login_item::register_once();
+    }
     // The delegate is what receives the Finder double-click of an already
     // running LSUIElement app; without it that click is silently swallowed.
     app.setDelegate(Some(ProtocolObject::from_ref(&*controller)));

@@ -17,8 +17,8 @@ use objc2::rc::Retained;
 use objc2::{sel, DefinedClass};
 use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSAlertStyle, NSAlertThirdButtonReturn, NSApplication,
-    NSColor, NSFont, NSFontAttributeName, NSForegroundColorAttributeName, NSMenu, NSMenuItem,
-    NSWorkspace,
+    NSColor, NSControlStateValueOff, NSControlStateValueOn, NSFont, NSFontAttributeName,
+    NSForegroundColorAttributeName, NSMenu, NSMenuItem, NSWorkspace,
 };
 use objc2_foundation::{
     MainThreadMarker, NSBundle, NSMutableAttributedString, NSNotificationCenter, NSRange,
@@ -32,6 +32,7 @@ use crate::update::install;
 use crate::update::release::{Release, Source, Version};
 
 use super::controller::Controller;
+use super::login_item::{self, LoginStatus};
 
 /// Posted from the check thread once its outcome is in the slot.
 pub(super) const CHECK_DONE: &str = "com.billsun.vitals.updateCheckDone";
@@ -132,6 +133,8 @@ pub(super) struct UpdateItems {
     pub(super) row: Retained<NSMenuItem>,
     /// The separator under `row`, present with it.
     pub(super) row_separator: Retained<NSMenuItem>,
+    /// `Start at Login`, refreshed from the registration on every open.
+    pub(super) login: Retained<NSMenuItem>,
     /// `Check for Updates…`.
     pub(super) check: Retained<NSMenuItem>,
 }
@@ -155,11 +158,14 @@ impl UpdateIvars {
     pub(super) fn new(mtm: MainThreadMarker, source: Source) -> UpdateIvars {
         let bundled = is_bundled();
         let items = bundled.then(|| {
+            let login = NSMenuItem::new(mtm);
+            login.setTitle(&NSString::from_str("Start at Login"));
             let check = NSMenuItem::new(mtm);
             check.setTitle(&NSString::from_str("Check for Updates…"));
             UpdateItems {
                 row: NSMenuItem::new(mtm),
                 row_separator: NSMenuItem::separatorItem(mtm),
+                login,
                 check,
             }
         });
@@ -182,14 +188,17 @@ impl Controller {
             return;
         };
         items.check.setEnabled(true);
-        // SAFETY: `self` responds to `checkForUpdates:` and `installUpdate:`,
-        // defined in `controller.rs`.
+        // SAFETY: `self` responds to `checkForUpdates:`, `installUpdate:` and
+        // `toggleLoginItem:`, defined in `controller.rs`.
         unsafe {
             items.check.setTarget(Some(self));
             items.check.setAction(Some(sel!(checkForUpdates:)));
             items.row.setTarget(Some(self));
             items.row.setAction(Some(sel!(installUpdate:)));
+            items.login.setTarget(Some(self));
+            items.login.setAction(Some(sel!(toggleLoginItem:)));
         }
+        menu.addItem(&items.login);
         menu.addItem(&items.check);
     }
 
@@ -395,6 +404,42 @@ impl Controller {
         };
         items.check.setTitle(&NSString::from_str(title));
         items.check.setEnabled(enabled);
+    }
+
+    /// The *Start at Login* row, from the live registration.
+    pub(super) fn refresh_login_item(&self) {
+        let Some(items) = self.ivars().update.items.as_ref() else {
+            return;
+        };
+        let (title, checked, enabled) = login_item::menu_state(login_item::status());
+        items.login.setTitle(&NSString::from_str(title));
+        items.login.setState(if checked {
+            NSControlStateValueOn
+        } else {
+            NSControlStateValueOff
+        });
+        items.login.setEnabled(enabled);
+    }
+
+    /// The row's action: flip the registration, or open the Settings
+    /// pane when macOS is waiting for approval.
+    pub(super) fn toggle_login_item(&self) {
+        let result = match login_item::status() {
+            LoginStatus::Enabled => login_item::set(false),
+            LoginStatus::NotRegistered => login_item::set(true),
+            LoginStatus::RequiresApproval => {
+                login_item::open_settings();
+                Ok(())
+            }
+            LoginStatus::NotFound => Ok(()),
+        };
+        if let Err(reason) = result {
+            alert(
+                MainThreadMarker::from(self),
+                "Couldn't change Start at Login",
+                &reason,
+            );
+        }
     }
 }
 

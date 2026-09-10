@@ -193,6 +193,11 @@ define_class!(
             self.install_update();
         }
 
+        #[unsafe(method(toggleLoginItem:))]
+        fn toggle_login_item_action(&self, _sender: *mut AnyObject) {
+            self.toggle_login_item();
+        }
+
         #[unsafe(method(updateCheckDone:))]
         fn update_check_done(&self, _n: *mut NSNotification) {
             // Posted from the check thread; hop exactly like `powerChanged:`.
@@ -257,6 +262,7 @@ define_class!(
         #[unsafe(method(menuWillOpen:))]
         fn menu_will_open(&self, _menu: &NSMenu) {
             self.refresh_update_items();
+            self.refresh_login_item();
             self.mutate_state(|s| s.menu_open = true);
             // Paint what we already have rather than waiting a tick. `show`,
             // not `push_sample`: the last snapshot is not a new point.
