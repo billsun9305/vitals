@@ -7,10 +7,10 @@
 //! invoke a registered selector from whatever thread posted the notification;
 //! see `controller`'s note on `powerChanged:`.
 
+mod child;
 mod controller;
 pub mod panel;
 pub mod status_item;
-mod window;
 
 use objc2::runtime::ProtocolObject;
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
