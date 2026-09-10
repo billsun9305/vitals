@@ -13,8 +13,10 @@ whole thing in their head, and the rules below exist to keep it that way.
   `rust-version` in `Cargo.toml`.
 - Node 22 or newer, for the dashboard in `dashboard/`.
 
-No `sudo`, no entitlements, no signing identity — the app bundle is ad-hoc
-signed and only ever installed on your own machine.
+No `sudo` and no entitlements. A local build is ad-hoc signed;
+`SIGN_IDENTITY="Developer ID Application: …" make bundle` signs with an
+identity of your own, which is how the release workflow builds — see
+*Signing, updates and the hidden verbs* below.
 
 ## The loop
 
@@ -66,8 +68,69 @@ empty state, the error state — `cargo run --release --example render_panel
 | `dashboard/` | The Vite + React page the server embeds. |
 | `docs/agents.md` | The JSON contract as an agent reads it. Update it whenever output changes. |
 | `docs/budget.md` | Every performance number this project has promised, with how it was measured. |
-| `resources/` | `Info.plist` for the bundle and the LaunchAgent plist. |
-| `scripts/` | The bundle script `make bundle` runs. |
+| `resources/` | `Info.plist` for the bundle. |
+| `scripts/` | `bundle.sh` (what `make bundle` runs); `release.sh` and `changelog-section.sh` (cutting a release, see README); `release-secrets.sh` (the maintainer's one-time setup of the signing secrets). |
+
+## Signing, updates and the hidden verbs
+
+`make bundle` signs `dist/Vitals.app` ad hoc unless `SIGN_IDENTITY`
+names a codesign identity, in which case it signs with the hardened
+runtime and a timestamp — what `.github/workflows/release.yml` does
+with the repository's Developer ID certificate. An ad-hoc build runs
+and updates itself; only a Developer-ID-signed build verifies a
+release's signature before installing it.
+
+Three subcommands are hidden from `--help` because nothing but the app
+itself should run them: `vitals window --url … --parent …` (the
+dashboard window process), `vitals relaunch --parent … --app …` (the
+updater's helper: waits for the tray to exit, then opens the new
+bundle) and `vitals login-item on|off|status` (used by `make
+uninstall-app` and the test below). The bare tray invocation also
+takes a hidden `--update-source http://127.0.0.1:<port>/`, which
+points the updater at a local server instead of GitHub and refuses
+anything that is not loopback.
+
+The updater and the login item are verified by running them. Before
+tagging a release that changes either:
+
+1. **Update, end to end.** Build the current version and bundle it;
+   then bump `Cargo.toml` and `resources/Info.plist` to the next patch
+   version, bundle again, and serve that bundle as a release:
+
+   ```bash
+   make bundle && cp -R dist/Vitals.app /tmp/old.app
+   /usr/libexec/PlistBuddy -c 'Set :CFBundleShortVersionString 0.1.1' resources/Info.plist
+   sed -i '' 's/^version = "0.1.0"/version = "0.1.1"/' Cargo.toml
+   make bundle
+   mkdir -p /tmp/serve/releases && cd /tmp/serve
+   COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata -C "$OLDPWD/dist" -czf Vitals-0.1.1-arm64.tar.gz Vitals.app
+   shasum -a 256 Vitals-0.1.1-arm64.tar.gz > SHA256SUMS
+   cat > releases/latest <<'JSON'
+   {"tag_name":"v0.1.1","draft":false,"prerelease":false,"html_url":"http://127.0.0.1:8000/","body":"Test release.",
+    "assets":[{"name":"Vitals-0.1.1-arm64.tar.gz","browser_download_url":"http://127.0.0.1:8000/Vitals-0.1.1-arm64.tar.gz"},
+              {"name":"SHA256SUMS","browser_download_url":"http://127.0.0.1:8000/SHA256SUMS"}]}
+   JSON
+   python3 -m http.server 8000 &
+   cd "$OLDPWD" && git checkout -- Cargo.toml Cargo.lock resources/Info.plist
+   ```
+
+   Install `/tmp/old.app` as `/Applications/Vitals.app`, quit any
+   running tray, and start it with
+   `/Applications/Vitals.app/Contents/MacOS/vitals --update-source http://127.0.0.1:8000/`.
+   Within a minute the dot appears; the dropdown's top row offers
+   0.1.1; *Install and Relaunch* replaces the bundle and the new tray
+   reports 0.1.1 as the latest. With both bundles signed by the same
+   Developer ID the signature check passes; repeat with the 0.1.1
+   bundle signed ad hoc and the install must refuse with a signature
+   error, leaving 0.1.0 in place. Record the tray's footprint before
+   and after a check in `docs/budget.md`.
+2. **Login item.** After `make install-app`, Vitals is listed under
+   System Settings → General → Login Items, the dropdown's *Start at
+   Login* is checked, unchecking it removes the entry, and
+   `/Applications/Vitals.app/Contents/MacOS/vitals login-item status`
+   agrees with each state.
+3. **Download.** After a tagged release, download the DMG with a
+   browser, drag, open: no Gatekeeper dialog.
 
 ## The rules that are not style
 
@@ -81,7 +144,10 @@ empty state, the error state — `cargo run --release --example render_panel
    demand. A feature that needs a timer, a socket or a thread to exist
    while idle needs a very good reason.
 3. **No `sudo`, no subprocesses, no `powermetrics`.** Everything is read
-   in-process.
+   in-process. The one subprocess in the codebase is the updater's
+   `vitals relaunch` helper — our own binary, started so the new bundle
+   can be opened after the tray exits — and the dashboard window, which
+   is a second process by design (`docs/budget.md`).
 4. **Pure decisions get unit tests; AppKit does not get unit tests.**
    Extract the arithmetic or the rule into a function and test that (see
    `tray/panel.rs` and `tray/status_item.rs` for the pattern). Verify the
@@ -105,6 +171,8 @@ empty state, the error state — `cargo run --release --example render_panel
 - CI (`.github/workflows/ci.yml`) runs fmt, clippy, the test suite, the
   dashboard lint and build, and the bundle script on an Apple Silicon
   runner. It has to be green.
+- A tag `vX.Y.Z` runs `.github/workflows/release.yml`, which publishes
+  a GitHub Release; cut one with `scripts/release.sh`, never by hand.
 - If you are changing what the tray or the dashboard looks like, put a
   screenshot (or the `render_panel` PNGs) in the PR.
 

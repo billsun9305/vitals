@@ -21,7 +21,7 @@ The first release. Everything below is new.
   with live text and a custom-drawn dropdown panel (CPU with per-core bars,
   GPU, memory judged by the kernel's pressure signal, power). Nothing
   redraws while the dropdown is closed; sampling backs off while the
-  display sleeps. Installs as a LaunchAgent via `make install-app`.
+  display sleeps. `make install-app` installs it to `/Applications`.
 - **Localhost server and dashboard** — `vitals serve` exposes
   `/api/snapshot`, `/api/top` and `/api/pressure` on `127.0.0.1` only,
   with a strict `Host` check, and serves an embedded React dashboard:
@@ -34,5 +34,14 @@ The first release. Everything below is new.
   window with a Dock tile and app menu that exist only while it is open.
 - **`docs/agents.md`** — the JSON contract written for agents, and
   **`docs/budget.md`** — every performance promise with its measurement.
+- **Releases** — `scripts/release.sh` cuts a version; the tag builds,
+  signs, notarizes and publishes `Vitals-<version>.dmg`, the updater's
+  tarball and `SHA256SUMS` on GitHub Releases.
+- **In-app updates** — the menu bar app checks GitHub Releases daily and
+  on demand, shows an accent dot and an *Update to Vitals x.y.z…* row, and
+  installs with one click after verifying the hash and, for a signed copy,
+  the Developer ID signature.
+- **Start at Login** — the app registers itself with `SMAppService` on its
+  first launch, with a toggle in the menu. There is no LaunchAgent.
 
 [Unreleased]: https://github.com/billsun9305/vitals/commits/main

@@ -27,6 +27,18 @@ you report:
 - **The binary runs unprivileged.** No `sudo`, no helper tool, no
   entitlements. Anything that would require or escalate to privileges is a
   bug worth reporting.
+- **Updates are verified twice.** The updater downloads only from
+  `github.com/billsun9305/vitals/releases/download/`, checks the tarball's
+  SHA-256 against the release's `SHA256SUMS`, and — when the running copy
+  carries a Developer ID signature — requires the new bundle to be validly
+  signed by the same Team ID before anything is replaced. A way to make an
+  installed, signed copy accept a bundle signed by anyone else is a
+  vulnerability. A copy built from source is ad-hoc signed and has no Team
+  ID, so it gets the hash check only, which proves the tarball is the one
+  the release published, not who published it.
+- **The updater never executes anything it downloaded.** The new bundle is
+  swapped in with a rename and started by a helper that is our own,
+  already-running binary; no script, no installer package.
 - **The dashboard is embedded and served from the binary.** It fetches
   only its own relative `/api/*` endpoints. Any way to make it load or
   execute remote content is a vulnerability.

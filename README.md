@@ -12,62 +12,68 @@ no `sudo`, no subprocess of any kind — and prints structured JSON an agent
 Today `vitals` is a CLI with four verbs: `snapshot`, `top`, `pressure`,
 `watch` (plus `serve`/`dashboard`, a local web dashboard — see
 `vitals --help`). The same binary, run with no arguments, is also a menu
-bar tray item; see [below](#the-menu-bar-app) for what it does and how to
-install it as a login item.
+bar tray item; see [below](#the-menu-bar-app) for what it does, and
+[Install](#install) for the download.
 
 ## Install
 
-Two independent ways to install, depending on what you want: the CLI on
-its own, or the menu bar app with autostart. Both end with a `vitals` on
-`PATH`, and it's fine to use either first — `make install-app` simply
-repoints the same symlink at the app bundle's copy of the binary instead
-of the raw build output.
+### Download
 
-### CLI only
+Requirements: an Apple Silicon Mac running macOS 14 or newer.
+
+1. Open the [latest release](https://github.com/billsun9305/vitals/releases/latest)
+   and download `Vitals-<version>.dmg`.
+2. Open it and drag **Vitals** to **Applications**.
+3. Open Vitals from Applications. It is notarized, so it opens without a
+   dialog, appears in the menu bar, and starts at login from now on — the
+   *Start at Login* item in its menu turns that off.
+
+When a newer version is published, the menu bar item shows an
+accent-coloured dot and *Update to Vitals x.y.z…* at the top of its menu
+installs it and relaunches. [Updates](#updates) below says exactly what is
+checked, when, and what is sent.
+
+If a release's notes say the build is not notarized, macOS refuses it the
+first time: go to System Settings → Privacy & Security, scroll to the
+message about Vitals, and click *Open Anyway*.
+
+To use the `vitals` CLI alongside the app, symlink the bundled binary onto
+your `PATH`:
 
 ```bash
-make build    # cargo build --release -> target/release/vitals
-make install  # symlinks target/release/vitals into $PREFIX/bin (default /usr/local/bin)
+ln -s /Applications/Vitals.app/Contents/MacOS/vitals ~/.local/bin/vitals
 ```
 
-`make install` needs write access to `$PREFIX/bin`, which usually means
-`sudo make install`. Override the prefix with `make install PREFIX=$HOME/.local`
-if you'd rather not use sudo. `make uninstall` removes the symlink.
+### From source, menu bar app
 
-Once installed, `vitals` is on `PATH` and every command below works from
-anywhere.
-
-### Menu bar app, with autostart
+You need `git`, Rust via [rustup](https://rustup.rs) (`rust-toolchain.toml`
+picks the toolchain) and Node 22 or newer.
 
 ```bash
-make install-app  # builds, bundles, copies to /Applications, registers the
-                   # LaunchAgent, and symlinks $PREFIX/bin/vitals to it
+git clone https://github.com/billsun9305/vitals.git
+cd vitals
+make install-app    # builds, bundles, copies to /Applications, opens it
 ```
 
-This copies `dist/Vitals.app` to `/Applications/Vitals.app`, installs
-`resources/com.billsun.vitals.plist` into `~/Library/LaunchAgents/` so the
-tray starts at every login, and (re)creates the `$PREFIX/bin/vitals`
-symlink, now pointing at `/Applications/Vitals.app/Contents/MacOS/vitals`.
-`make uninstall-app` reverses all of it (`launchctl unload`, remove the
-LaunchAgent, remove `/Applications/Vitals.app`, remove the symlink).
+This copies `dist/Vitals.app` to `/Applications/Vitals.app`, symlinks
+`~/.local/bin/vitals` to the bundled binary (`PREFIX=/usr/local` to put it
+there instead) and opens the app, which registers itself as a login item
+on its first launch. Nothing needs `sudo`. `make uninstall-app` turns the
+login item off, quits the tray, and removes the bundle and the symlink.
 
-`make install-app` needs `sudo` under the same condition as plain
-`make install` (write access to `$PREFIX/bin`), plus write access to
-`/Applications` and `~/Library/LaunchAgents`, which do not need `sudo`.
+A source build is ad-hoc signed: it runs, and it updates itself, but the
+updater cannot check a release's signature against it — see
+[SECURITY.md](SECURITY.md). To sign a local build with your own Developer
+ID identity: `SIGN_IDENTITY="Developer ID Application: …" make install-app`.
 
-**The app is ad-hoc signed, not notarized.** `scripts/bundle.sh` runs
-`codesign --sign -`, which satisfies `codesign --verify` and lets the
-binary run, but it is not a real Developer ID signature — there's no team
-identity behind it, and it will never pass notarization
-(`spctl -a --type execute` on the built bundle reports it as rejected).
-Launching it via `launchctl`/the LaunchAgent execs the binary directly and
-is unaffected by this. But if you ever double-click `Vitals.app` in
-Finder (or otherwise open it through Launch Services) and macOS calls it
-"unidentified" and refuses to open it, right-click → Open once to trust
-it, or approve it under System Settings → Privacy & Security. This is
-expected and permanent for a locally-built, non-distributed app — it is
-not a bug in the bundle, and it is why the release note below does not
-claim notarization.
+### From source, CLI only
+
+```bash
+make install    # cargo build --release, then symlink ~/.local/bin/vitals
+```
+
+`make install PREFIX=/usr/local` puts the symlink there instead (that one
+needs write access to `/usr/local/bin`). `make uninstall` removes it.
 
 ## The four verbs
 
@@ -390,21 +396,36 @@ Polling stops whenever the page is hidden, and if the server goes away the
 last good render stays on screen, dimmed, until it is back. Light and dark
 follow the system.
 
-`make install-app` packages this into `dist/Vitals.app`
-(`scripts/bundle.sh` plus `resources/Info.plist`, which sets
-`LSUIElement` so the app never shows a Dock icon or an app-switcher
-entry), installs it to `/Applications`, and registers
-`resources/com.billsun.vitals.plist` as a per-user LaunchAgent so the
-tray starts at every login — see [Install](#install) above for the exact
-targets. `make uninstall-app` removes all of it: the LaunchAgent (after
-`launchctl unload`), `/Applications/Vitals.app`, and the `$PREFIX/bin/vitals`
-symlink.
+### Start at Login
 
-A LaunchAgent rather than `SMAppService`: no entitlements to declare, the
-plist is trivially inspectable (`plutil -lint`,
-`cat ~/Library/LaunchAgents/com.billsun.vitals.plist`), and
-`launchctl unload`/`load` round-trips cleanly while debugging, versus
-`SMAppService`'s more opaque registration.
+The app registers itself as a login item the first time it runs from a
+bundle, through `SMAppService` — the registration System Settings →
+General → Login Items shows, and nothing else: no LaunchAgent, no helper.
+*Start at Login* in the dropdown turns it off and on. The registration
+names the bundle rather than a path inside it, so it survives the updater
+replacing the bundle. If macOS asks you to approve the item, the menu
+item says so and opens the right Settings pane.
+
+### Updates
+
+Thirty seconds after the tray starts, and then once a day (with an hour
+of slack so macOS can batch the wake-up with others), it asks
+`api.github.com/repos/billsun9305/vitals/releases/latest` for the newest
+version. The request carries the GitHub API headers, `User-Agent:
+vitals/<version>`, and the standard headers macOS's networking adds to
+every app's requests (such as your preferred languages) — no account, no
+device identifier, no usage data — and nothing is downloaded until you
+ask. *Check for Updates…* runs the same check on demand and reports
+either way.
+
+When the latest release is newer, an accent-coloured dot appears after the
+digits in the menu bar and *Update to Vitals x.y.z…* appears at the top of
+the dropdown. *Install and Relaunch* downloads the release's tarball and
+`SHA256SUMS`, verifies the hash, unpacks next to the bundle, checks that
+the new bundle's version is the release's and — when the running copy is
+signed with a Developer ID — that the new one is validly signed by the
+same team, then swaps it in and relaunches. Any failure leaves the
+installed copy untouched and says why.
 
 ### Releasing a new version
 
