@@ -156,12 +156,14 @@ jobs:
               || scripts/changelog-section.sh Unreleased > out/notes.md
           fi
           if [ "$SIGNED" != true ]; then
+            # Indented to the block's column: `run: |` strips it, so the
+            # shell sees these lines at column 0 and NOTE terminates.
             cat >> out/notes.md <<'NOTE'
 
----
+          ---
 
-**This build is not notarized.** It is signed ad hoc, so macOS refuses to open it the first time. To open it: try once, then go to System Settings → Privacy & Security, scroll to the message about Vitals, and click *Open Anyway*.
-NOTE
+          **This build is not notarized.** It is signed ad hoc, so macOS refuses to open it the first time. To open it: try once, then go to System Settings → Privacy & Security, scroll to the message about Vitals, and click *Open Anyway*.
+          NOTE
           fi
           cat out/notes.md
 
