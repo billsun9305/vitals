@@ -145,8 +145,12 @@ jobs:
         run: |
           (cd out && shasum -a 256 "Vitals-$VERSION-arm64.tar.gz" "Vitals-$VERSION.dmg" > SHA256SUMS)
           cat out/SHA256SUMS
-          scripts/changelog-section.sh "$VERSION" > out/notes.md \
-            || scripts/changelog-section.sh Unreleased > out/notes.md
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            scripts/changelog-section.sh "$VERSION" > out/notes.md
+          else
+            scripts/changelog-section.sh "$VERSION" > out/notes.md \
+              || scripts/changelog-section.sh Unreleased > out/notes.md
+          fi
           if [ "$SIGNED" != true ]; then
             cat >> out/notes.md <<'NOTE'
 
