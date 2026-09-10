@@ -16,8 +16,9 @@ use std::time::Instant;
 use objc2::rc::Retained;
 use objc2::{sel, DefinedClass};
 use objc2_app_kit::{
-    NSAlert, NSAlertFirstButtonReturn, NSAlertStyle, NSColor, NSFont, NSFontAttributeName,
-    NSForegroundColorAttributeName, NSMenu, NSMenuItem, NSWorkspace,
+    NSAlert, NSAlertFirstButtonReturn, NSAlertStyle, NSAlertThirdButtonReturn, NSApplication,
+    NSColor, NSFont, NSFontAttributeName, NSForegroundColorAttributeName, NSMenu, NSMenuItem,
+    NSWorkspace,
 };
 use objc2_foundation::{
     MainThreadMarker, NSBundle, NSMutableAttributedString, NSNotificationCenter, NSRange,
@@ -27,12 +28,16 @@ use objc2_foundation::{
 use crate::update::checker::{
     self, CheckOutcome, Slot, UpdateState, CHECK_PERIOD_S, CHECK_TOLERANCE_S, FIRST_CHECK_S,
 };
+use crate::update::install;
 use crate::update::release::{Release, Source, Version};
 
 use super::controller::Controller;
 
 /// Posted from the check thread once its outcome is in the slot.
 pub(super) const CHECK_DONE: &str = "com.billsun.vitals.updateCheckDone";
+
+/// Posted from the install thread once its result is in the slot.
+pub(super) const INSTALL_DONE: &str = "com.billsun.vitals.updateInstallDone";
 
 /// Whether this process runs from a `.app` bundle. Only then does the
 /// feature exist: a `cargo run` binary has no bundle to replace.
@@ -44,16 +49,6 @@ pub(super) fn is_bundled() -> bool {
 }
 
 /// The bundle's path, for the installer. Meaningful only when `is_bundled()`.
-///
-/// Unused within Task 8: it exists for Task 9's installer worker, its
-/// first caller. Unlike the other forward-declared `update::*` interfaces
-/// (`install::run`, `relaunch::run`, …), which stay live under
-/// `-D dead_code` because `update` is a `pub mod` reachable from the crate
-/// root, `update_ui` is a private submodule of `tray` (by this same
-/// brief's own `tray/mod.rs`), so no visibility modifier on this function
-/// makes it part of the crate's public API — only a call site would. See
-/// the Task 8 report's Concerns section.
-#[allow(dead_code)]
 pub(super) fn app_url() -> PathBuf {
     PathBuf::from(NSBundle::mainBundle().bundlePath().to_string())
 }
@@ -146,6 +141,7 @@ pub(super) struct UpdateIvars {
     pub(super) source: Option<Source>,
     pub(super) state: RefCell<UpdateState>,
     pub(super) check_slot: Slot<(CheckOutcome, bool)>,
+    pub(super) install_slot: Slot<Result<(), String>>,
     /// The 30 s one-shot and the daily repeat, kept so they are not
     /// collected. Never invalidated: they live as long as the tray.
     pub(super) timers: RefCell<Vec<Retained<NSTimer>>>,
@@ -168,6 +164,7 @@ impl UpdateIvars {
             source: bundled.then_some(source),
             state: RefCell::new(UpdateState::default()),
             check_slot: Arc::new(Mutex::new(None)),
+            install_slot: Arc::new(Mutex::new(None)),
             timers: RefCell::new(Vec::new()),
             items,
         }
@@ -281,7 +278,8 @@ impl Controller {
         }
     }
 
-    /// The release alert. *View Release* opens the release page.
+    /// The release alert: *Install and Relaunch* (default), *Later*,
+    /// *View Release*. *Later* changes nothing; the dot stays.
     pub(super) fn offer_install(&self, release: &Release) {
         let mtm = MainThreadMarker::from(self);
         let alert = NSAlert::new(mtm);
@@ -291,10 +289,63 @@ impl Controller {
             release.version
         )));
         alert.setInformativeText(&NSString::from_str(&truncate_notes(&release.notes)));
-        alert.addButtonWithTitle(&NSString::from_str("View Release"));
+        alert.addButtonWithTitle(&NSString::from_str("Install and Relaunch"));
         alert.addButtonWithTitle(&NSString::from_str("Later"));
-        if alert.runModal() == NSAlertFirstButtonReturn {
+        alert.addButtonWithTitle(&NSString::from_str("View Release"));
+        let response = alert.runModal();
+        if response == NSAlertFirstButtonReturn {
+            self.start_install(release.clone());
+        } else if response == NSAlertThirdButtonReturn {
             open_page(&release.page_url);
+        }
+    }
+
+    /// Run the install on a worker thread. Its result comes back through
+    /// `INSTALL_DONE`. Nothing else may start while it runs: `start_check`
+    /// refuses, and the row reads `Installing…`.
+    pub(super) fn start_install(&self, release: Release) {
+        let Some(source) = self.ivars().update.source.clone() else {
+            return;
+        };
+        {
+            let mut state = self.ivars().update.state.borrow_mut();
+            if state.installing {
+                return;
+            }
+            state.installing = true;
+        }
+        let app_url = app_url();
+        let slot = Arc::clone(&self.ivars().update.install_slot);
+        std::thread::Builder::new()
+            .name("vitals-update-install".into())
+            .spawn(move || {
+                let result = install::run(&source, &release, &app_url).map_err(|e| e.to_string());
+                *slot.lock().unwrap() = Some(result);
+                post(INSTALL_DONE);
+            })
+            .expect("spawning the install thread");
+    }
+
+    /// On the main thread, after `INSTALL_DONE`. Success means the new
+    /// bundle is in place and the helper is waiting for this process to
+    /// exit: terminate. Failure means nothing changed: say why.
+    pub(super) fn install_finished(&self) {
+        let Some(result) = self.ivars().update.install_slot.lock().unwrap().take() else {
+            return;
+        };
+        let mtm = MainThreadMarker::from(self);
+        let version = {
+            let mut state = self.ivars().update.state.borrow_mut();
+            state.installing = false;
+            state
+                .available
+                .as_ref()
+                .map(|r| r.version.to_string())
+                .unwrap_or_default()
+        };
+        match result {
+            Ok(()) => NSApplication::sharedApplication(mtm).terminate(None),
+            Err(reason) => alert(mtm, &format!("Couldn't install Vitals {version}"), &reason),
         }
     }
 
@@ -315,13 +366,19 @@ impl Controller {
                     menu.insertItem_atIndex(&items.row_separator, 0);
                     menu.insertItem_atIndex(&items.row, 0);
                 }
-                let title = format!("● Update to Vitals {}…", release.version);
-                items.row.setAttributedTitle(Some(&styled(
-                    &title,
-                    &NSFont::menuFontOfSize(0.0),
-                    (0, 1),
-                )));
-                items.row.setEnabled(true);
+                if state.installing {
+                    items.row.setAttributedTitle(None);
+                    items.row.setTitle(&NSString::from_str("Installing…"));
+                    items.row.setEnabled(false);
+                } else {
+                    let title = format!("● Update to Vitals {}…", release.version);
+                    items.row.setAttributedTitle(Some(&styled(
+                        &title,
+                        &NSFont::menuFontOfSize(0.0),
+                        (0, 1),
+                    )));
+                    items.row.setEnabled(true);
+                }
             }
             (None, true) => {
                 menu.removeItem(&items.row);

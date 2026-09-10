@@ -213,6 +213,27 @@ define_class!(
         fn update_check_done_on_main(&self) {
             self.check_finished();
         }
+
+        #[unsafe(method(updateInstallDone:))]
+        fn update_install_done(&self, _n: *mut NSNotification) {
+            // Posted from the install thread; hop exactly like `powerChanged:`.
+            //
+            // SAFETY: `self` responds to `updateInstallDoneOnMain`, which
+            // takes no argument, so the object passed is null.
+            unsafe {
+                let _: () = msg_send![
+                    self,
+                    performSelectorOnMainThread: sel!(updateInstallDoneOnMain),
+                    withObject: std::ptr::null_mut::<AnyObject>(),
+                    waitUntilDone: false,
+                ];
+            }
+        }
+
+        #[unsafe(method(updateInstallDoneOnMain))]
+        fn update_install_done_on_main(&self) {
+            self.install_finished();
+        }
     }
 
     unsafe impl NSObjectProtocol for Controller {}
@@ -421,6 +442,12 @@ impl Controller {
                 self,
                 sel!(updateCheckDone:),
                 Some(&NSString::from_str(update_ui::CHECK_DONE)),
+                None,
+            );
+            default.addObserver_selector_name_object(
+                self,
+                sel!(updateInstallDone:),
+                Some(&NSString::from_str(update_ui::INSTALL_DONE)),
                 None,
             );
         }
