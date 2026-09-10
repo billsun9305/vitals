@@ -511,15 +511,82 @@ mod tests {
         addr
     }
 
+    /// A port that is reserved but has no listener: bound, never
+    /// `listen()`ed, held until dropped. Nothing else can be handed it, and
+    /// a connect to it is refused, which is exactly what "free" means to
+    /// `probe`. `libc` because std has no bind-without-listen.
+    ///
+    /// The obvious way to get a free port, `TcpListener::bind(":0")` then
+    /// drop, is a *listening* socket, and on GitHub's macOS runner a connect
+    /// made right after closing one can still complete the handshake before
+    /// the kernel has finished tearing the listener down: the request is
+    /// written, the read returns nothing, and `probe` reports a stranger.
+    /// Measured on that runner at 1 in 20 and then 6 in 30 loaded runs of
+    /// this test binary, and never once on a real Mac. A socket that never
+    /// listened has no handshake to finish, so it cannot do that.
+    struct ReservedPort {
+        fd: libc::c_int,
+        port: u16,
+    }
+
+    impl ReservedPort {
+        fn new() -> Self {
+            // SAFETY: socket/bind/getsockname on a descriptor this struct
+            // owns and closes in `Drop`; the sockaddr buffers are zeroed and
+            // sized here, and every call's return is checked.
+            unsafe {
+                let fd = libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0);
+                assert!(fd >= 0, "socket: {}", std::io::Error::last_os_error());
+                let mut sa: libc::sockaddr_in = std::mem::zeroed();
+                sa.sin_len = std::mem::size_of::<libc::sockaddr_in>() as u8;
+                sa.sin_family = libc::AF_INET as libc::sa_family_t;
+                sa.sin_addr.s_addr = u32::from(std::net::Ipv4Addr::LOCALHOST).to_be();
+                let len = std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t;
+                let sa_ptr = (&sa as *const libc::sockaddr_in).cast::<libc::sockaddr>();
+                assert_eq!(
+                    libc::bind(fd, sa_ptr, len),
+                    0,
+                    "bind: {}",
+                    std::io::Error::last_os_error()
+                );
+                let mut got: libc::sockaddr_in = std::mem::zeroed();
+                let mut got_len = len;
+                let got_ptr = (&mut got as *mut libc::sockaddr_in).cast::<libc::sockaddr>();
+                assert_eq!(
+                    libc::getsockname(fd, got_ptr, &mut got_len),
+                    0,
+                    "getsockname: {}",
+                    std::io::Error::last_os_error()
+                );
+                Self {
+                    fd,
+                    port: u16::from_be(got.sin_port),
+                }
+            }
+        }
+
+        fn addr(&self) -> std::net::SocketAddr {
+            std::net::SocketAddr::from(([127, 0, 0, 1], self.port))
+        }
+    }
+
+    impl Drop for ReservedPort {
+        fn drop(&mut self) {
+            // SAFETY: `fd` is a descriptor this struct opened and nothing
+            // else closes.
+            unsafe { libc::close(self.fd) };
+        }
+    }
+
     #[test]
     fn an_unheld_port_probes_as_free() {
-        // Bind to get a port the OS says is free, then drop it. A tiny race
-        // window, but nothing else in the test suite binds to a fixed port.
-        let addr = std::net::TcpListener::bind("127.0.0.1:0")
-            .expect("bind")
-            .local_addr()
-            .expect("addr");
-        assert_eq!(probe(&addr), Probe::Free);
+        let reserved = ReservedPort::new();
+        assert_eq!(
+            probe(&reserved.addr()),
+            Probe::Free,
+            "port {}",
+            reserved.port
+        );
     }
 
     #[test]
@@ -544,11 +611,9 @@ mod tests {
         // The tray calls this on the AppKit main thread, so how long it
         // blocks is a UI property, not just a performance one: anything
         // approaching a frame budget shows up as the menu stuttering shut.
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .expect("bind")
-            .local_addr()
-            .expect("addr")
-            .port();
+        // Reserved without ever listening, then released: see `ReservedPort`
+        // for why a dropped `TcpListener` is not a free port here.
+        let port = ReservedPort::new().port;
 
         let started = std::time::Instant::now();
         let addr = ensure_running(port).expect("a free port must yield a server");
