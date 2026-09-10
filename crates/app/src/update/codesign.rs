@@ -16,9 +16,21 @@ use std::ptr::NonNull;
 
 use objc2_core_foundation::{CFDictionary, CFRetained, CFString, CFType, CFURL};
 use objc2_security::{
-    kSecCSSigningInformation, kSecCodeInfoTeamIdentifier, SecCSFlags, SecCode, SecRequirement,
+    kSecCSCheckAllArchitectures, kSecCSCheckNestedCode, kSecCSSigningInformation,
+    kSecCSStrictValidate, kSecCodeInfoTeamIdentifier, SecCSFlags, SecCode, SecRequirement,
     SecStaticCode,
 };
+
+/// Flags for the actual validity check in [`verify_team`]. The default
+/// flags (`SecCSFlags::DefaultFlags`, used for every other call in this
+/// file) validate only the outer code — a tampered nested signed dylib in
+/// `Contents/Frameworks/…` passes unnoticed. This combination closes that:
+/// `kSecCSCheckNestedCode` walks into nested code and frameworks,
+/// `kSecCSStrictValidate` applies the stricter, more literal validation
+/// rules, and `kSecCSCheckAllArchitectures` validates every architecture
+/// slice in a fat binary rather than just the running one.
+const VALIDITY_FLAGS: SecCSFlags =
+    SecCSFlags(kSecCSCheckNestedCode | kSecCSStrictValidate | kSecCSCheckAllArchitectures);
 
 /// The designated requirement an update must satisfy: signed through
 /// Apple's Developer ID chain (`anchor apple generic`) by a leaf
@@ -128,7 +140,7 @@ pub fn verify_team(bundle: &Path, team_id: &str) -> Result<(), String> {
         unsafe { CFRetained::from_raw(NonNull::new(requirement).ok_or("no requirement object")?) };
 
     // SAFETY: both objects are alive for the call.
-    let status = unsafe { code.check_validity(SecCSFlags::DefaultFlags, Some(&requirement)) };
+    let status = unsafe { code.check_validity(VALIDITY_FLAGS, Some(&requirement)) };
     if status == 0 {
         Ok(())
     } else {
