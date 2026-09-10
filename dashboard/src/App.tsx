@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import './App.css'
 import { ChartCard } from './components/ChartCard'
 import { CoreBars, CoreTable } from './components/CoreBars'
@@ -12,7 +12,7 @@ import { celsius, clock, gb, levelFor, mhz, pct, uptime, watts, type Level } fro
 import { useHistory } from './hooks/useHistory'
 import type { RangeSec } from './ranges'
 import { useVisiblePolling } from './hooks/useVisiblePolling'
-import type { PressureLevel, Snapshot, ThermalState, TopReport, Verdict as VerdictData } from './types'
+import type { PressureLevel, Snapshot, ThermalState, TopReport, Verdict as VerdictData, VersionInfo } from './types'
 
 // Matches the background sampler's own cadence (`crates/app/src/serve/mod.rs`),
 // so the dashboard never asks for a sample that doesn't exist yet.
@@ -44,6 +44,7 @@ export default function App() {
   const [verdict, setVerdict] = useState<VerdictData | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [range, setRange] = useState<RangeSec>(120)
+  const [version, setVersion] = useState<string | null>(null)
   const { samples, push } = useHistory()
 
   const pollSnapshot = useCallback(async () => {
@@ -66,6 +67,13 @@ export default function App() {
       // The snapshot poll already surfaces connectivity trouble; a stale
       // process list or verdict is harmless for a few seconds.
     }
+  }, [])
+
+  // The running binary's version, asked once: it cannot change under a page.
+  useEffect(() => {
+    getJSON<VersionInfo>('/api/version')
+      .then(v => setVersion(v.version))
+      .catch(() => {})
   }, [])
 
   useVisiblePolling(pollSnapshot, SNAPSHOT_POLL_MS)
@@ -118,7 +126,8 @@ export default function App() {
             Memory pressure {snap.mem_pressure}
           </span>
           <span className="meta">
-            load {snap.load_avg.map(l => l.toFixed(1)).join(' · ')} · {clock(Date.parse(snap.sampled_at))}
+            {version && `Vitals ${version} · `}
+            {clock(Date.parse(snap.sampled_at))}
           </span>
         </div>
       </header>

@@ -17,6 +17,7 @@ pub enum Route {
     Snapshot,
     Top,
     Pressure,
+    Version,
     Asset(String),
     NotFound,
 }
@@ -72,6 +73,7 @@ pub fn route(path: &str) -> Route {
         "/api/snapshot" => Route::Snapshot,
         "/api/top" => Route::Top,
         "/api/pressure" => Route::Pressure,
+        "/api/version" => Route::Version,
         p if p.starts_with('/') && p.len() > 1 => {
             Route::Asset(p.trim_start_matches('/').to_string())
         }
@@ -86,6 +88,17 @@ fn json_header() -> Header {
 /// Build a `{"error": "..."}` body with the message properly JSON-escaped,
 /// so an error string containing a `"` or `\` still produces valid JSON —
 /// every agent-facing response on this server is contractually valid JSON.
+/// `/api/version`: the build that is answering, so the dashboard (or any
+/// agent) can say which Vitals it is talking to without spawning
+/// `vitals --version`. Carries `schema_version` like every other response.
+pub(super) fn version_body() -> String {
+    serde_json::json!({
+        "schema_version": vitals_core::schema::SCHEMA_VERSION,
+        "version": env!("CARGO_PKG_VERSION"),
+    })
+    .to_string()
+}
+
 pub(super) fn error_body(e: &str) -> String {
     // `schema_version` on the error too: the contract in docs/agents.md is
     // that EVERY response carries it, and an agent that mistypes an endpoint
@@ -420,6 +433,7 @@ pub fn run(port: u16, open_browser: bool) -> Result<(), String> {
                     }
                 }
             },
+            Route::Version => Response::from_string(version_body()).with_header(json_header()),
             Route::Index => assets::index(),
             Route::Asset(p) => assets::serve(&p),
             // JSON, not the bare "not found" text this used to send: an agent

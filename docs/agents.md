@@ -88,6 +88,8 @@ default. Same schema as the CLI, same `schema_version`, same units in the key
 names. Useful if you are already long-running and would rather not pay
 process spawn per question; the CLI is still the simpler choice for one-off
 questions, and costs nothing when you are not asking.
+`GET /api/version` answers `{"schema_version":1,"version":"x.y.z"}`: the build
+that is running, for a client that wants to say which Vitals it asked.
 
 Three things to know:
 

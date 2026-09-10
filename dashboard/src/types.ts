@@ -109,3 +109,10 @@ export interface Verdict {
   suspects: Suspect[]
   summary: string
 }
+
+/** `GET /api/version`. */
+export interface VersionInfo {
+  schema_version: number
+  /** The running binary's version, `x.y.z` (a pre-release keeps its suffix). */
+  version: string
+}

@@ -366,6 +366,17 @@ impl Controller {
         }
         menu.addItem(&quit);
 
+        // The build that is running, greyed at the very bottom: the one
+        // place the version shows without a terminal.
+        menu.addItem(&NSMenuItem::separatorItem(mtm));
+        let version = NSMenuItem::new(mtm);
+        version.setTitle(&NSString::from_str(&format!(
+            "Vitals {}",
+            env!("CARGO_PKG_VERSION")
+        )));
+        version.setEnabled(false);
+        menu.addItem(&version);
+
         menu.setDelegate(Some(ProtocolObject::from_ref(&*this)));
         status_item.setMenu(Some(&menu));
 

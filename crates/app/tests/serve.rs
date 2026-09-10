@@ -87,6 +87,17 @@ fn api_snapshot_returns_the_same_schema_as_the_cli() {
 }
 
 #[test]
+fn api_version_reports_the_running_binary_version() {
+    vitals_core::skip_without_hardware!();
+    let _s = start(9887);
+    let (code, body) = get(9887, "/api/version");
+    assert_eq!(code, 200);
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["schema_version"], 1);
+    assert_eq!(v["version"], env!("CARGO_PKG_VERSION"));
+}
+
+#[test]
 fn unknown_paths_are_404_not_a_panic() {
     vitals_core::skip_without_hardware!();
     let _s = start(9878);
@@ -101,6 +112,7 @@ fn routing_is_a_pure_function() {
     assert_eq!(route("/api/snapshot"), Route::Snapshot);
     assert_eq!(route("/api/top"), Route::Top);
     assert_eq!(route("/api/pressure"), Route::Pressure);
+    assert_eq!(route("/api/version"), Route::Version);
     assert_eq!(route("/"), Route::Index);
     assert_eq!(
         route("/assets/app.js"),

@@ -23,7 +23,8 @@ The first release. Everything below is new.
   redraws while the dropdown is closed; sampling backs off while the
   display sleeps. `make install-app` installs it to `/Applications`.
 - **Localhost server and dashboard** — `vitals serve` exposes
-  `/api/snapshot`, `/api/top` and `/api/pressure` on `127.0.0.1` only,
+  `/api/snapshot`, `/api/top`, `/api/pressure` and `/api/version` on
+  `127.0.0.1` only,
   with a strict `Host` check, and serves an embedded React dashboard:
   verdict card, stat tiles with trends, a 2/5/15-minute range, CPU and GPU
   charts with crosshair and tooltip, per-core bars, memory and swap meters,
