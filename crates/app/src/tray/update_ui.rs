@@ -141,7 +141,10 @@ pub(super) struct UpdateIvars {
     pub(super) source: Option<Source>,
     pub(super) state: RefCell<UpdateState>,
     pub(super) check_slot: Slot<(CheckOutcome, bool)>,
-    pub(super) install_slot: Slot<Result<(), String>>,
+    /// The version that was being installed travels with the result, so
+    /// `install_finished` names the release that was actually installed
+    /// even if a check that landed in between replaced `state.available`.
+    pub(super) install_slot: Slot<(Version, Result<(), String>)>,
     /// The 30 s one-shot and the daily repeat, kept so they are not
     /// collected. Never invalidated: they live as long as the tray.
     pub(super) timers: RefCell<Vec<Retained<NSTimer>>>,
@@ -301,26 +304,29 @@ impl Controller {
     }
 
     /// Run the install on a worker thread. Its result comes back through
-    /// `INSTALL_DONE`. Nothing else may start while it runs: `start_check`
-    /// refuses, and the row reads `Installing…`.
+    /// `INSTALL_DONE`. Nothing else may start while it runs: refuse if a
+    /// check is in flight (its landing would overwrite `state.available`
+    /// out from under this install) or an install already is; the row
+    /// reads `Installing…`.
     pub(super) fn start_install(&self, release: Release) {
         let Some(source) = self.ivars().update.source.clone() else {
             return;
         };
         {
             let mut state = self.ivars().update.state.borrow_mut();
-            if state.installing {
+            if state.checking || state.installing {
                 return;
             }
             state.installing = true;
         }
+        let version = release.version;
         let app_url = app_url();
         let slot = Arc::clone(&self.ivars().update.install_slot);
         std::thread::Builder::new()
             .name("vitals-update-install".into())
             .spawn(move || {
                 let result = install::run(&source, &release, &app_url).map_err(|e| e.to_string());
-                *slot.lock().unwrap() = Some(result);
+                *slot.lock().unwrap() = Some((version, result));
                 post(INSTALL_DONE);
             })
             .expect("spawning the install thread");
@@ -328,21 +334,17 @@ impl Controller {
 
     /// On the main thread, after `INSTALL_DONE`. Success means the new
     /// bundle is in place and the helper is waiting for this process to
-    /// exit: terminate. Failure means nothing changed: say why.
+    /// exit: terminate. Failure means nothing changed: say why, naming the
+    /// version that was actually installed — it travelled with the result
+    /// rather than being re-read from `state.available`, which a check
+    /// landing during the install may since have replaced or cleared.
     pub(super) fn install_finished(&self) {
-        let Some(result) = self.ivars().update.install_slot.lock().unwrap().take() else {
+        let Some((version, result)) = self.ivars().update.install_slot.lock().unwrap().take()
+        else {
             return;
         };
         let mtm = MainThreadMarker::from(self);
-        let version = {
-            let mut state = self.ivars().update.state.borrow_mut();
-            state.installing = false;
-            state
-                .available
-                .as_ref()
-                .map(|r| r.version.to_string())
-                .unwrap_or_default()
-        };
+        self.ivars().update.state.borrow_mut().installing = false;
         match result {
             Ok(()) => NSApplication::sharedApplication(mtm).terminate(None),
             Err(reason) => alert(mtm, &format!("Couldn't install Vitals {version}"), &reason),
