@@ -287,3 +287,44 @@ process exits within ~11 ms of the tray dying (kqueue `NOTE_EXIT` on the
 parent pid — one wakeup, no polling), and a second "Open Dashboard" while
 it is up re-fronts it rather than launching a second copy.
 
+
+## Updates, signing and the login item
+
+Measured on 2026-09-10, Apple M1 Pro, macOS 26.5 (25F71), ad-hoc: the
+Developer ID certificate did not exist yet (`security find-identity -v -p
+codesigning` lists no "Developer ID Application" identity).
+
+| | Value | Cap |
+|---|---|---|
+| Stripped binary (`target/release/vitals`) | **1.30 MB** (1,360,064 bytes) | 6 MB |
+| `Vitals.app` on disk | 1.32 MB (1,348 KB) | — |
+| Tray footprint before the first check | **18 MB** | 25 MB |
+| Tray footprint after a check found an update | **18 MB** | 25 MB |
+| Tray footprint one minute later | **18 MB** | 25 MB |
+
+The binary grew by ~180 KB over the previous section's 1.18 MB: `flate2`,
+`tar`, `sha2` and the updater itself. The check is one `NSURLSession`
+created for the request and invalidated after it; `lsof` showed no TCP
+socket held by the tray after the check, and a minute later nothing of it
+remains, which is the third row. Between checks the only thing that exists
+is one `NSTimer` a day with an hour of tolerance. Tray CPU stayed at 0.0%
+throughout.
+
+Update check end to end (`--update-source http://127.0.0.1:8000/` against
+a local `python3 -m http.server` carrying a 0.1.1 release): the tray
+fetched `releases/latest` 31 s after launch — one request, nothing else
+until an install is asked for. The click-driven half (the dot's colour on
+a light and a dark menu bar, the *Update to Vitals 0.1.1…* row, the
+alert, *Install and Relaunch*, no quarantine on the new bundle) needs a
+human at the screen and is recorded here as **pending**, together with
+the signed run and the `BadSignature` refusal, which need the
+certificate. The install pipeline itself (hash check, staged unpack,
+swap, rollback on every failure) is covered by `crates/app/tests/update.rs`
+against a loopback server and temporary bundles.
+
+Login item: `login-item status` from the freshly installed, ad-hoc
+re-signed bundle reported `enabled` (the registration survived the
+re-sign), `login-item off` → `not-registered`, `login-item on` →
+`enabled`, `registeredAtLogin` left at 1. The System Settings listing and
+the dropdown toggle are visual and **pending** the same session at the
+screen.
