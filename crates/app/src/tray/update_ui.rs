@@ -8,7 +8,7 @@
 //! `Slot` and post a notification, and the controller hops back onto the
 //! main thread before reading it — the `powerChanged:` pattern.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -152,6 +152,14 @@ pub(super) struct UpdateIvars {
     /// collected. Never invalidated: they live as long as the tray.
     pub(super) timers: RefCell<Vec<Retained<NSTimer>>>,
     pub(super) items: Option<UpdateItems>,
+    /// A release the user chose to install while a check was in flight
+    /// (I1): parked here by `start_install` instead of being dropped, and
+    /// installed by `check_finished` once that check lands.
+    pub(super) pending_install: RefCell<Option<Release>>,
+    /// A manual *Check for Updates…* click that arrived while a check was
+    /// already running (ledger #85): promotes that check's landing to
+    /// report as manual, so the click still gets its alert.
+    pub(super) manual_pending: Cell<bool>,
 }
 
 impl UpdateIvars {
@@ -176,7 +184,31 @@ impl UpdateIvars {
             install_slot: Arc::new(Mutex::new(None)),
             timers: RefCell::new(Vec::new()),
             items,
+            pending_install: RefCell::new(None),
+            manual_pending: Cell::new(false),
         }
+    }
+}
+
+/// What `start_install` should do, given the state flags at the moment it
+/// is called — pure, so it is unit-tested without AppKit. An install
+/// already running blocks a second one; a check in flight defers instead
+/// of silently dropping the click (I1), since the check's landing retries
+/// it once `checking` clears.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum InstallAction {
+    Blocked,
+    Defer,
+    Start,
+}
+
+pub(super) fn install_action(checking: bool, installing: bool) -> InstallAction {
+    if installing {
+        InstallAction::Blocked
+    } else if checking {
+        InstallAction::Defer
+    } else {
+        InstallAction::Start
     }
 }
 
@@ -233,7 +265,10 @@ impl Controller {
     }
 
     /// Start a check unless one is already running or an install is.
-    /// `manual` decides whether the outcome is reported in an alert.
+    /// `manual` decides whether the outcome is reported in an alert. A
+    /// manual click while a check is already running does not start a
+    /// second one; it promotes the running check's landing to report as
+    /// manual instead (ledger #85), rather than doing nothing.
     pub(super) fn start_check(&self, manual: bool) {
         let Some(source) = self.ivars().update.source.clone() else {
             return;
@@ -241,6 +276,9 @@ impl Controller {
         {
             let mut state = self.ivars().update.state.borrow_mut();
             if state.checking || state.installing {
+                if manual && state.checking {
+                    self.ivars().update.manual_pending.set(true);
+                }
                 return;
             }
             state.checking = true;
@@ -253,11 +291,16 @@ impl Controller {
 
     /// On the main thread, after `CHECK_DONE`: fold the outcome in and,
     /// for a manual check, say what happened. An automatic failure is one
-    /// line on stderr and nothing else.
+    /// line on stderr and nothing else. A release parked in
+    /// `pending_install` by `start_install` (I1) is installed now that
+    /// `checking` is clear, ahead of reporting this check's own outcome —
+    /// the user already chose that release, and the installer re-verifies
+    /// hash and signature regardless of what this check found.
     pub(super) fn check_finished(&self) {
         let Some((outcome, manual)) = self.ivars().update.check_slot.lock().unwrap().take() else {
             return;
         };
+        let manual = manual || self.ivars().update.manual_pending.replace(false);
         if let (CheckOutcome::Failed(reason), false) = (&outcome, manual) {
             eprintln!("vitals: update check failed: {reason}");
         }
@@ -267,6 +310,10 @@ impl Controller {
             .borrow_mut()
             .apply(outcome.clone(), Instant::now());
         self.refresh_title();
+        if let Some(release) = self.ivars().update.pending_install.borrow_mut().take() {
+            self.start_install(release);
+            return;
+        }
         if !manual {
             return;
         }
@@ -313,20 +360,36 @@ impl Controller {
     }
 
     /// Run the install on a worker thread. Its result comes back through
-    /// `INSTALL_DONE`. Nothing else may start while it runs: refuse if a
-    /// check is in flight (its landing would overwrite `state.available`
-    /// out from under this install) or an install already is; the row
-    /// reads `Installing…`.
+    /// `INSTALL_DONE`. An install already running refuses a second one. A
+    /// check in flight (I1) does not drop the click either: its landing
+    /// would overwrite `state.available` out from under a install started
+    /// now, so the release is parked in `pending_install` instead and
+    /// `check_finished` starts it once that check lands; the row reads
+    /// `Installing…` either way.
     pub(super) fn start_install(&self, release: Release) {
         let Some(source) = self.ivars().update.source.clone() else {
             return;
         };
-        {
+        let action = {
             let mut state = self.ivars().update.state.borrow_mut();
-            if state.checking || state.installing {
+            let action = install_action(state.checking, state.installing);
+            if action == InstallAction::Start {
+                state.installing = true;
+            }
+            action
+        };
+        match action {
+            InstallAction::Blocked => return,
+            InstallAction::Defer => {
+                *self.ivars().update.pending_install.borrow_mut() = Some(release);
+                if let Some(items) = self.ivars().update.items.as_ref() {
+                    items.row.setAttributedTitle(None);
+                    items.row.setTitle(&NSString::from_str("Installing…"));
+                    items.row.setEnabled(false);
+                }
                 return;
             }
-            state.installing = true;
+            InstallAction::Start => {}
         }
         let version = release.version;
         let app_url = app_url();
@@ -397,13 +460,15 @@ impl Controller {
             }
             (None, false) => {}
         }
-        let (title, enabled) = if state.checking {
-            ("Checking…", false)
+        let title = if state.checking {
+            "Checking…"
         } else {
-            ("Check for Updates…", true)
+            "Check for Updates…"
         };
         items.check.setTitle(&NSString::from_str(title));
-        items.check.setEnabled(enabled);
+        // Disabled during an install too (ledger #101): a click here while
+        // installing would start a second, overlapping check.
+        items.check.setEnabled(!state.checking && !state.installing);
     }
 
     /// The *Start at Login* row, from the live registration.
@@ -445,7 +510,7 @@ impl Controller {
 
 #[cfg(test)]
 mod tests {
-    use super::truncate_notes;
+    use super::{install_action, truncate_notes, InstallAction};
 
     #[test]
     fn notes_are_trimmed_and_cut_at_fifteen_hundred_characters() {
@@ -457,5 +522,17 @@ mod tests {
         assert_eq!(cut.chars().count(), 1_501);
         assert!(cut.ends_with('…'));
         assert!(cut.starts_with(&"é".repeat(1_500)));
+    }
+
+    /// (I1) A click that reaches `start_install` never gets silently
+    /// dropped: it either starts, is deferred to run once the in-flight
+    /// check lands, or is blocked because an install is already running.
+    #[test]
+    fn install_action_defers_to_a_running_check_instead_of_dropping_the_click() {
+        assert_eq!(install_action(false, false), InstallAction::Start);
+        assert_eq!(install_action(true, false), InstallAction::Defer);
+        assert_eq!(install_action(false, true), InstallAction::Blocked);
+        // An install already running wins even if `checking` is also set.
+        assert_eq!(install_action(true, true), InstallAction::Blocked);
     }
 }
