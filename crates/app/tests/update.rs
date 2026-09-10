@@ -334,6 +334,36 @@ fn a_tarball_with_two_top_level_entries_is_rejected() {
 }
 
 #[test]
+fn an_archive_outside_the_download_base_is_refused_and_leaves_no_staging() {
+    let tmp = tempfile::tempdir().unwrap();
+    let installed = make_bundle(&tmp.path().join("installed"), OLD);
+
+    let fx = Fixture::start();
+    let source = fx.source();
+
+    // A second loopback port stands in for a host the release must not
+    // point at: well-formed, but not under `source.download_base`. Nothing
+    // needs to listen there, since the check runs before any download.
+    let other_port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let name = archive_name(Version::parse(NEW).unwrap());
+    let release = Release {
+        version: Version::parse(NEW).unwrap(),
+        notes: String::new(),
+        page_url: fx.base.clone(),
+        archive_url: format!("http://127.0.0.1:{other_port}/{name}"),
+        sums_url: format!("{}SHA256SUMS", fx.base),
+        archive_name: name,
+    };
+
+    let err = expect_failure_for(&source, &release, &installed, tmp.path());
+    assert!(matches!(err, UpdateError::BadRelease(_)), "{err}");
+}
+
+#[test]
 fn server_errors_are_reported_and_nothing_changes() {
     let tmp = tempfile::tempdir().unwrap();
     let installed = make_bundle(&tmp.path().join("installed"), OLD);

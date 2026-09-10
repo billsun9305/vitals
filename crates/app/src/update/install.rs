@@ -100,18 +100,21 @@ pub fn prepare(source: &Source, release: &Release, app_url: &Path) -> Result<Sta
 /// be empty. It is removed on failure. Tests use this to know where the
 /// staging directory was after a failure that returned no `Staged`.
 pub fn prepare_in(dir: PathBuf, source: &Source, release: &Release) -> Result<Staged, UpdateError> {
-    if !release.archive_url.starts_with(&source.download_base) {
-        return Err(UpdateError::BadRelease(format!(
-            "{} is not under {}",
-            release.archive_url, source.download_base
-        )));
-    }
     let mut staged = Staged {
         app: dir.join(BUNDLE_NAME),
         dir,
         signature_checked: false,
         swapped: false,
     };
+
+    // Checked first, but after `staged` exists: a failing check returns
+    // through `Staged`'s `Drop`, which removes the staging directory.
+    if !release.archive_url.starts_with(&source.download_base) {
+        return Err(UpdateError::BadRelease(format!(
+            "{} is not under {}",
+            release.archive_url, source.download_base
+        )));
+    }
 
     // Step 2: download. The sums first, so a bad tarball is never kept.
     let sums_path = http::download(&release.sums_url, &staged.dir)?;
