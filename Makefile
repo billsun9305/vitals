@@ -79,10 +79,12 @@ install-app: bundle
 	@echo "installed $(APP); $(PREFIX)/bin/vitals -> $(APP)/Contents/MacOS/vitals"
 
 # Turns the login item off from the installed bundle (the registration
-# names that bundle, so its own binary must do it), quits the tray, and
+# names that bundle, so its own binary must do it), quits the tray,
+# unloads and removes a LaunchAgent left by an older install, and
 # removes the bundle and the symlink.
 uninstall-app:
 	-"$(APP)/Contents/MacOS/vitals" login-item off 2>/dev/null
 	-killall vitals 2>/dev/null
+	if [ -f "$(LAUNCH_AGENT)" ]; then launchctl unload "$(LAUNCH_AGENT)" 2>/dev/null; rm -f "$(LAUNCH_AGENT)"; fi
 	rm -rf "$(APP)"
 	rm -f "$(PREFIX)/bin/vitals"
