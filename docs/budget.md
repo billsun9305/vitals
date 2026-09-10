@@ -310,21 +310,43 @@ remains, which is the third row. Between checks the only thing that exists
 is one `NSTimer` a day with an hour of tolerance. Tray CPU stayed at 0.0%
 throughout.
 
-Update check end to end (`--update-source http://127.0.0.1:8000/` against
-a local `python3 -m http.server` carrying a 0.1.1 release): the tray
-fetched `releases/latest` 31 s after launch — one request, nothing else
-until an install is asked for. The click-driven half (the dot's colour on
-a light and a dark menu bar, the *Update to Vitals 0.1.1…* row, the
-alert, *Install and Relaunch*, no quarantine on the new bundle) needs a
-human at the screen and is recorded here as **pending**, together with
-the signed run and the `BadSignature` refusal, which need the
-certificate. The install pipeline itself (hash check, staged unpack,
-swap, rollback on every failure) is covered by `crates/app/tests/update.rs`
-against a loopback server and temporary bundles.
+Update end to end (`--update-source http://127.0.0.1:8000/` against a
+local `python3 -m http.server` carrying a 0.1.1 release): the tray fetched
+`releases/latest` 30 s after launch — one request, nothing else until an
+install was asked for. Bill then clicked *Install and Relaunch* from the
+dropdown: `SHA256SUMS` and the tarball were fetched, the bundle was
+swapped and the new tray was running from `/Applications/Vitals.app`
+within the same second (12:22:05 on both the download log and the
+bundle's mtime); the old tray exited 0; the new bundle carries only
+`com.apple.provenance`, no `com.apple.quarantine`; `codesign --verify
+--deep --strict` passes on it; `login-item status` from the new bundle
+still says `enabled`, so the registration survived the swap. The running
+copy was ad-hoc, so the signature check was skipped with the expected
+stderr line; the signed run and the `BadSignature` refusal are **pending**
+the certificate. The dot's colour on a light and a dark menu bar and the
+System Settings listing were not checked by anyone yet and remain
+**pending**.
+
+Two footprints that are not the idle number, and why:
+
+| | Value |
+|---|---|
+| Relaunched 0.1.1 tray, 2 min after Bill's menu + alert interaction | 35 MB (peak 50 MB) |
+| Fresh 0.1.0 tray via LaunchServices, before / after / 2 min after its first real GitHub check | 18 / 18 / 18 MB (peak 18 MB) |
+
+The first row is the cost of having shown an `NSAlert` and a menu with an
+attributed title — AppKit's window machinery, the same thing the
+"Opening the dashboard once" section above measured — not the updater.
+The second row is the number that matters for the contract: an unattended
+tray stays at 18 MB through the HTTPS check. That check does reach GitHub:
+a hand-launched tray with stderr captured printed
+`update check failed: https://api.github.com/repos/billsun9305/vitals/releases/latest: HTTP 404`
+at the 30 s mark (no release exists yet) and sat at 19 MB.
 
 Login item: `login-item status` from the freshly installed, ad-hoc
 re-signed bundle reported `enabled` (the registration survived the
 re-sign), `login-item off` → `not-registered`, `login-item on` →
-`enabled`, `registeredAtLogin` left at 1. The System Settings listing and
-the dropdown toggle are visual and **pending** the same session at the
+`enabled`, `registeredAtLogin` left at 1; after `make install-app` of the
+real build it still reads `enabled`. The System Settings listing and the
+dropdown toggle are visual and **pending** the same session at the
 screen.
