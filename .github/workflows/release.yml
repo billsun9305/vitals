@@ -107,6 +107,8 @@ jobs:
           xcrun notarytool submit "$RUNNER_TEMP/Vitals.zip" \
             --key "$RUNNER_TEMP/AuthKey.p8" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" --wait
           xcrun stapler staple dist/Vitals.app
+          xcrun stapler validate dist/Vitals.app
+          spctl -a -t exec -vv dist/Vitals.app
 
       # The tarball is the updater's asset: exactly one top-level entry,
       # Vitals.app. COPYFILE_DISABLE and --no-xattrs keep bsdtar from adding
@@ -118,8 +120,10 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           mkdir -p out
-          COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata -C dist -czf "out/Vitals-$VERSION-arm64.tar.gz" Vitals.app
-          tar -tzf "out/Vitals-$VERSION-arm64.tar.gz" | cut -d/ -f1 | sort -u
+          archive="out/Vitals-$VERSION-arm64.tar.gz"
+          COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata -C dist -czf "$archive" Vitals.app
+          top="$(tar -tzf "$archive" | cut -d/ -f1 | sort -u)"
+          [ "$top" = "Vitals.app" ] || { echo "tarball top level is not exactly Vitals.app: $top" >&2; exit 1; }
           staging="$RUNNER_TEMP/dmg"
           mkdir -p "$staging"
           cp -R dist/Vitals.app "$staging/"
