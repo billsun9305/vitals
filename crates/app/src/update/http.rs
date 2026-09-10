@@ -42,18 +42,17 @@ pub const TIMEOUT_S: f64 = 10.0;
 /// minutes is far more than a ~10 MB tarball needs on a slow link.
 const RESOURCE_TIMEOUT_S: f64 = 600.0;
 
-/// The request every call sends: the GitHub REST headers and our own
-/// `User-Agent`. Nothing else — no token, no cookie.
-fn request(url: &str) -> Result<Retained<NSMutableURLRequest>, UpdateError> {
+/// A request to `url` carrying exactly `headers`. Nothing else — no
+/// token, no cookie. Shared by `fetch` and `download`, which each send a
+/// different header set: see their own docs for why.
+fn request(
+    url: &str,
+    headers: &[(&str, &str)],
+) -> Result<Retained<NSMutableURLRequest>, UpdateError> {
     let ns_url = NSURL::URLWithString(&NSString::from_str(url))
         .ok_or_else(|| UpdateError::Http(format!("not a URL: {url}")))?;
     let req = NSMutableURLRequest::requestWithURL(&ns_url);
-    let user_agent = format!("vitals/{}", env!("CARGO_PKG_VERSION"));
-    for (field, value) in [
-        ("Accept", "application/vnd.github+json"),
-        ("X-GitHub-Api-Version", "2022-11-28"),
-        ("User-Agent", user_agent.as_str()),
-    ] {
+    for (field, value) in headers {
         req.setValue_forHTTPHeaderField(
             Some(&NSString::from_str(value)),
             &NSString::from_str(field),
@@ -101,9 +100,19 @@ unsafe fn status_of(response: *mut NSURLResponse, error: *mut NSError) -> Result
     }
 }
 
-/// `GET url`, the whole body in memory. For the `releases/latest` JSON.
+/// `GET url`, the whole body in memory. For the `releases/latest` JSON —
+/// the one request that actually goes to `api.github.com`, so it is the
+/// only one that sends the GitHub REST headers.
 pub fn fetch(url: &str) -> Result<Vec<u8>, UpdateError> {
-    let req = request(url)?;
+    let user_agent = format!("vitals/{}", env!("CARGO_PKG_VERSION"));
+    let req = request(
+        url,
+        &[
+            ("Accept", "application/vnd.github+json"),
+            ("X-GitHub-Api-Version", "2022-11-28"),
+            ("User-Agent", user_agent.as_str()),
+        ],
+    )?;
     let session = session();
     let (tx, rx) = mpsc::channel::<Result<Vec<u8>, String>>();
     let handler = block2::RcBlock::new(
@@ -131,7 +140,13 @@ pub fn fetch(url: &str) -> Result<Vec<u8>, UpdateError> {
 }
 
 /// `GET url` to a file in `dir`, named after the URL's last path segment.
-/// For `SHA256SUMS` and the tarball.
+/// For `SHA256SUMS` and the tarball — both served from
+/// `releases/download/…`, which 302s to `objects.githubusercontent.com`
+/// (I3): the GitHub REST headers have no business going there, and
+/// `Accept: application/vnd.github+json` on a route that content-negotiates
+/// on `Accept` is exactly the kind of thing that could turn a redirect
+/// into something else. Send only `User-Agent` and a plain binary
+/// `Accept`.
 pub fn download(url: &str, dir: &Path) -> Result<PathBuf, UpdateError> {
     let name = url
         .rsplit('/')
@@ -139,7 +154,14 @@ pub fn download(url: &str, dir: &Path) -> Result<PathBuf, UpdateError> {
         .filter(|n| !n.is_empty() && !n.contains('?'))
         .ok_or_else(|| UpdateError::Http(format!("no file name at the end of {url}")))?;
     let dest = dir.join(name);
-    let req = request(url)?;
+    let user_agent = format!("vitals/{}", env!("CARGO_PKG_VERSION"));
+    let req = request(
+        url,
+        &[
+            ("User-Agent", user_agent.as_str()),
+            ("Accept", "application/octet-stream"),
+        ],
+    )?;
     let session = session();
     let (tx, rx) = mpsc::channel::<Result<(), String>>();
     // The block runs on another thread, so it gets a `PathBuf` (Send) and
@@ -303,6 +325,33 @@ mod tests {
         .unwrap();
         assert_eq!(path, dir.path().join("Vitals-0.2.0-arm64.tar.gz"));
         assert_eq!(std::fs::read(&path).unwrap(), b"tarball bytes");
+    }
+
+    /// (I3) `download` is the one link that really goes to GitHub's
+    /// redirect-to-storage route in production; it must not carry the
+    /// GitHub REST API headers `fetch` sends.
+    #[test]
+    fn download_sends_only_user_agent_and_a_plain_accept_header() {
+        let fx = serve(vec![("/Vitals-0.2.0-arm64.tar.gz", 200, b"tarball bytes")]);
+        let dir = tempfile::tempdir().unwrap();
+        download(
+            &format!("{}/Vitals-0.2.0-arm64.tar.gz", fx.base),
+            dir.path(),
+        )
+        .unwrap();
+        let headers = fx.headers.lock().unwrap().clone();
+        let find = |name: &str| {
+            headers
+                .iter()
+                .find(|(f, _)| f.eq_ignore_ascii_case(name))
+                .map(|(_, v)| v.clone())
+        };
+        assert_eq!(find("Accept").as_deref(), Some("application/octet-stream"));
+        assert_eq!(
+            find("User-Agent").as_deref(),
+            Some(format!("vitals/{}", env!("CARGO_PKG_VERSION")).as_str())
+        );
+        assert!(find("X-GitHub-Api-Version").is_none());
     }
 
     #[test]

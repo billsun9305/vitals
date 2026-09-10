@@ -131,6 +131,12 @@ tagging a release that changes either:
    agrees with each state.
 3. **Download.** After a tagged release, download the DMG with a
    browser, drag, open: no Gatekeeper dialog.
+4. **Asset URLs.** After the release exists,
+   `curl -sIL -H 'User-Agent: vitals/<version>' <each asset URL>` must end
+   in `HTTP/2 200` with a plausible `Content-Length`. The download URL
+   redirects to `objects.githubusercontent.com`, which is outside
+   `download_base` by design; the hash and the signature cover the bytes,
+   not the host.
 
 ## The rules that are not style
 

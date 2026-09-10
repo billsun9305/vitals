@@ -35,7 +35,9 @@ you report:
   installed, signed copy accept a bundle signed by anyone else is a
   vulnerability. A copy built from source is ad-hoc signed and has no Team
   ID, so it gets the hash check only, which proves the tarball is the one
-  the release published, not who published it.
+  the release published, not who published it. The download URL redirects
+  to `objects.githubusercontent.com`, which is outside that prefix by
+  design; the hash and the signature cover the bytes, not the host.
 - **The updater never executes anything it downloaded.** The new bundle is
   swapped in with a rename and started by a helper that is our own,
   already-running binary; no script, no installer package.
