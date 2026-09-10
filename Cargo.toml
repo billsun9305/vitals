@@ -33,6 +33,8 @@ flate2 = "1"
 tar = "0.4"
 # 0.11 needs Rust 1.85; the workspace floor is 1.82.
 sha2 = "0.10"
+# tempfile pulls in getrandom; getrandom 0.4 needs Rust 1.85, so Cargo.lock
+# holds it at 0.3 — `cargo update` must keep it there.
 tempfile = "3"
 objc2-security = "=0.3.2"
 objc2-service-management = "=0.3.2"
