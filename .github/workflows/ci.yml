@@ -52,6 +52,15 @@ jobs:
       - name: Test
         run: cargo test --workspace -- --nocapture
 
+      # The release script is never run by CI, but a broken one is found
+      # here rather than on tag day: the dry run applies its edits to copies
+      # and prints the diff, and the notes extractor must find the
+      # Unreleased section. Both must print something.
+      - name: Release script dry run
+        run: |
+          scripts/release.sh --dry-run 9.9.9 | tee /dev/stderr | grep -q '9\.9\.9'
+          scripts/changelog-section.sh Unreleased | grep -q .
+
       - name: Bundle
         run: make bundle
 
