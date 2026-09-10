@@ -8,6 +8,7 @@
 //! worker thread and keeps the state the tray shows. Nothing here touches
 //! AppKit — the tray's own `update_ui` does that.
 
+pub mod checker;
 pub mod codesign;
 pub mod http;
 pub mod install;

@@ -49,6 +49,8 @@ use vitals_core::thermal::{low_power_mode, on_battery, thermal_state};
 use super::child::DashboardProcess;
 use super::panel::PanelView;
 use super::status_item::format_title;
+use super::update_ui::{self, UpdateIvars};
+use crate::update::release::Source;
 
 /// `NSVariableStatusItemLength`. objc2-app-kit 0.3 does not re-export the
 /// AppKit constant, so it is spelled out here.
@@ -73,7 +75,7 @@ const PLACEHOLDER_TITLE: &str = "…";
 const FAILED_TITLE: &str = "⚠";
 
 pub struct Ivars {
-    status_item: Retained<NSStatusItem>,
+    pub(super) status_item: Retained<NSStatusItem>,
     /// The custom-drawn dropdown view hosted in item 0. Fed only while the
     /// menu is open — see `apply_sample` and `menuDidClose:`.
     panel: Retained<PanelView>,
@@ -92,6 +94,8 @@ pub struct Ivars {
     /// Launches and re-fronts the dashboard's own window process — see
     /// `child`'s module doc.
     dashboard: DashboardProcess,
+    /// Everything about updates — see `update_ui`.
+    pub(super) update: UpdateIvars,
 }
 
 define_class!(
@@ -173,6 +177,42 @@ define_class!(
             let low = low_power_mode();
             self.mutate_state(|s| s.low_power = low);
         }
+
+        #[unsafe(method(updateTimerFired:))]
+        fn update_timer_fired(&self, _timer: *mut NSTimer) {
+            self.start_check(false);
+        }
+
+        #[unsafe(method(checkForUpdates:))]
+        fn check_for_updates(&self, _sender: *mut AnyObject) {
+            self.start_check(true);
+        }
+
+        #[unsafe(method(installUpdate:))]
+        fn install_update_action(&self, _sender: *mut AnyObject) {
+            self.install_update();
+        }
+
+        #[unsafe(method(updateCheckDone:))]
+        fn update_check_done(&self, _n: *mut NSNotification) {
+            // Posted from the check thread; hop exactly like `powerChanged:`.
+            //
+            // SAFETY: `self` responds to `updateCheckDoneOnMain`, which takes
+            // no argument, so the object passed is null.
+            unsafe {
+                let _: () = msg_send![
+                    self,
+                    performSelectorOnMainThread: sel!(updateCheckDoneOnMain),
+                    withObject: std::ptr::null_mut::<AnyObject>(),
+                    waitUntilDone: false,
+                ];
+            }
+        }
+
+        #[unsafe(method(updateCheckDoneOnMain))]
+        fn update_check_done_on_main(&self) {
+            self.check_finished();
+        }
     }
 
     unsafe impl NSObjectProtocol for Controller {}
@@ -195,6 +235,7 @@ define_class!(
     unsafe impl NSMenuDelegate for Controller {
         #[unsafe(method(menuWillOpen:))]
         fn menu_will_open(&self, _menu: &NSMenu) {
+            self.refresh_update_items();
             self.mutate_state(|s| s.menu_open = true);
             // Paint what we already have rather than waiting a tick. `show`,
             // not `push_sample`: the last snapshot is not a new point.
@@ -215,7 +256,7 @@ define_class!(
 );
 
 impl Controller {
-    pub fn new(mtm: MainThreadMarker) -> Retained<Self> {
+    pub fn new(mtm: MainThreadMarker, source: Source) -> Retained<Self> {
         let state = TrayState {
             menu_open: false,
             on_battery: on_battery(),
@@ -265,6 +306,7 @@ impl Controller {
             timer_period_ms: Cell::new(None),
             sampler_dead: Cell::new(false),
             dashboard: DashboardProcess::new(),
+            update: UpdateIvars::new(mtm, source),
         };
 
         let this = Self::alloc(mtm).set_ivars(ivars);
@@ -280,6 +322,8 @@ impl Controller {
             dashboard.setAction(Some(sel!(openDashboard:)));
         }
         menu.addItem(&dashboard);
+
+        this.install_update_items(&menu);
 
         let quit = NSMenuItem::new(mtm);
         quit.setTitle(&NSString::from_str("Quit vitals"));
@@ -297,6 +341,7 @@ impl Controller {
 
         this.observe_notifications();
         this.sync_timer();
+        this.schedule_update_checks();
         this
     }
 
@@ -342,6 +387,9 @@ impl Controller {
     /// here: `NSProcessInfoPowerStateDidChange` tracks Low Power Mode, and
     /// IOKit's power-source callback needs a run loop source rather than an
     /// observer. It is polled in `tick:` instead — see `refresh_power_source`.
+    ///
+    /// `updateCheckDone:` is posted by the check thread, so like
+    /// `powerChanged:` it only hops.
     fn observe_notifications(&self) {
         let workspace = NSWorkspace::sharedWorkspace().notificationCenter();
         let default = NSNotificationCenter::defaultCenter();
@@ -364,6 +412,12 @@ impl Controller {
                 self,
                 sel!(powerChanged:),
                 Some(NSProcessInfoPowerStateDidChangeNotification),
+                None,
+            );
+            default.addObserver_selector_name_object(
+                self,
+                sel!(updateCheckDone:),
+                Some(&NSString::from_str(update_ui::CHECK_DONE)),
                 None,
             );
         }

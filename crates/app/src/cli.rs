@@ -7,6 +7,8 @@ use vitals_core::schema::{build_snapshot, now_rfc3339, Snapshot, SnapshotInputs}
 use vitals_core::sysctl::mem_pressure_level;
 use vitals_core::thermal::thermal_state;
 
+use crate::update::release::Source;
+
 /// Default sampling window. Short enough to feel instant to an agent, long
 /// enough for stable IOReport deltas.
 pub const DEFAULT_INTERVAL_MS: u32 = 200;
@@ -27,6 +29,12 @@ pub const MIN_INTERVAL_MS: u32 = 20;
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
+
+    /// Where the menu bar app looks for updates: a loopback base such as
+    /// `http://127.0.0.1:8000/`, for the manual end-to-end test in
+    /// CONTRIBUTING.md. Anything else is refused. Hidden from `--help`.
+    #[arg(long, hide = true)]
+    pub update_source: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -139,6 +147,15 @@ pub fn collect_snapshot(interval_ms: u32) -> Result<Snapshot, String> {
         load_avg: load_avg(),
         uptime_s: uptime_s(),
     }))
+}
+
+/// The release source for the tray: GitHub, unless the hidden
+/// `--update-source` flag names a loopback base.
+pub fn update_source(flag: Option<String>) -> Result<Source, String> {
+    match flag {
+        None => Ok(Source::github()),
+        Some(url) => Source::loopback(&url).map_err(|e| e.to_string()),
+    }
 }
 
 pub fn run_snapshot(interval_ms: u32, human: bool) -> Result<(), String> {
@@ -410,6 +427,27 @@ pub fn run_watch(interval_s: u64, count: u64) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn update_source_defaults_to_github_and_accepts_only_loopback() {
+        use clap::CommandFactory;
+        assert_eq!(update_source(None), Ok(Source::github()));
+        assert_eq!(
+            update_source(Some("http://localhost:8000/".into())).map(|s| s.download_base),
+            Ok("http://localhost:8000/".to_string())
+        );
+        let err = update_source(Some("https://example.com/".into())).unwrap_err();
+        assert!(err.contains("https://example.com/"), "{err}");
+        // Parses on the bare invocation, and stays out of --help.
+        let cli =
+            Cli::try_parse_from(["vitals", "--update-source", "http://127.0.0.1:1/"]).unwrap();
+        assert!(cli.command.is_none());
+        assert_eq!(cli.update_source.as_deref(), Some("http://127.0.0.1:1/"));
+        assert!(!Cli::command()
+            .render_help()
+            .to_string()
+            .contains("update-source"));
+    }
 
     /// The monitoring process must never be named as the cause of the load
     /// it is reporting.

@@ -11,20 +11,26 @@ mod child;
 mod controller;
 pub mod panel;
 pub mod status_item;
+mod update_ui;
 
 use objc2::runtime::ProtocolObject;
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 use objc2_foundation::MainThreadMarker;
 
+use crate::update::release::Source;
+
 /// Run the menu bar app. Never returns.
-pub fn run() -> ! {
+///
+/// `source` is where updates are looked up; it is only used when this
+/// process runs from a bundle.
+pub fn run(source: Source) -> ! {
     let mtm = MainThreadMarker::new().expect("tray must run on the main thread");
     let app = NSApplication::sharedApplication(mtm);
     // Accessory: menu bar only, no Dock icon, no menu bar menus of its own.
     app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
     // Held for the lifetime of the run loop: the status item, the menu
     // delegate and the notification centre all reference it unretained.
-    let controller = controller::Controller::new(mtm);
+    let controller = controller::Controller::new(mtm, source);
     // The delegate is what receives the Finder double-click of an already
     // running LSUIElement app; without it that click is silently swallowed.
     app.setDelegate(Some(ProtocolObject::from_ref(&*controller)));
