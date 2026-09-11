@@ -22,7 +22,7 @@ jobs:
     # Apple Silicon only, the same runner as ci.yml.
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The tag, Cargo.toml and Info.plist must agree before anything is
       # built. A manual run takes Cargo.toml's version as the tag's.
