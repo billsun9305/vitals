@@ -179,7 +179,7 @@ jobs:
           gh release create "v$VERSION" --title "Vitals $VERSION" --notes-file out/notes.md $prerelease \
             "out/Vitals-$VERSION.dmg" "out/Vitals-$VERSION-arm64.tar.gz" out/SHA256SUMS
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: github.ref_type != 'tag'
         with:
           name: release-${{ steps.version.outputs.version }}
