@@ -47,7 +47,7 @@ jobs:
           esac
           echo "signed=${{ secrets.MACOS_CERT_P12 != '' }}" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
