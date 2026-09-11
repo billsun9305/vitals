@@ -6,6 +6,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-10
+
 The first release. Everything below is new.
 
 ### Added
@@ -45,4 +47,5 @@ The first release. Everything below is new.
 - **Start at Login** — the app registers itself with `SMAppService` on its
   first launch, with a toggle in the menu. There is no LaunchAgent.
 
-[Unreleased]: https://github.com/billsun9305/vitals/commits/main
+[Unreleased]: https://github.com/billsun9305/vitals/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/billsun9305/vitals/releases/tag/v0.1.0
