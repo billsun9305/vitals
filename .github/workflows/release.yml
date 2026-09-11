@@ -101,11 +101,11 @@ jobs:
           NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
           NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
           NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+          NOTARY_KEY_P8_PATH: ${{ runner.temp }}/AuthKey.p8
         run: |
-          printf '%s' "$NOTARY_KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
+          printf '%s' "$NOTARY_KEY_P8" > "$NOTARY_KEY_P8_PATH"
           ditto -c -k --keepParent dist/Vitals.app "$RUNNER_TEMP/Vitals.zip"
-          xcrun notarytool submit "$RUNNER_TEMP/Vitals.zip" \
-            --key "$RUNNER_TEMP/AuthKey.p8" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" --wait
+          scripts/notarize.sh "$RUNNER_TEMP/Vitals.zip"
           xcrun stapler staple dist/Vitals.app
           xcrun stapler validate dist/Vitals.app
           spctl -a -t exec -vv dist/Vitals.app
@@ -136,10 +136,10 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
           NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+          NOTARY_KEY_P8_PATH: ${{ runner.temp }}/AuthKey.p8
         run: |
           codesign --sign "$SIGN_IDENTITY" --timestamp "out/Vitals-$VERSION.dmg"
-          xcrun notarytool submit "out/Vitals-$VERSION.dmg" \
-            --key "$RUNNER_TEMP/AuthKey.p8" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" --wait
+          scripts/notarize.sh "out/Vitals-$VERSION.dmg"
           xcrun stapler staple "out/Vitals-$VERSION.dmg"
 
       - name: Sums and notes
