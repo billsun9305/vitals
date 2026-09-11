@@ -322,8 +322,14 @@ bundle's mtime); the old tray exited 0; the new bundle carries only
 --deep --strict` passes on it; `login-item status` from the new bundle
 still says `enabled`, so the registration survived the swap. The running
 copy was ad-hoc, so the signature check was skipped with the expected
-stderr line; the signed run and the `BadSignature` refusal are **pending**
-the certificate. The dot's colour on a light and a dark menu bar and the
+stderr line. The signing pipeline itself was proven the same day on
+GitHub's runner (release.yml run 34542003903, started by hand): the
+Developer ID import, hardened-runtime signing, notarization of the app
+(Apple took 43 minutes on the team's first submission) and of the DMG
+(38 seconds), `stapler validate`, and `spctl -a -t exec` answering
+`accepted, source=Notarized Developer ID`. The local signed update and the
+`BadSignature` refusal remain **pending** a published signed release to
+install as the running copy. The dot's colour on a light and a dark menu bar and the
 System Settings listing were not checked by anyone yet and remain
 **pending**.
 
